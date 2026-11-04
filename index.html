@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Tanker</title>
+  <meta name="description" content="A free, turn-based artillery brawler that runs in your browser. No pay-to-win.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="menu" class="overlay">
+    <div class="card">
+      <h1 class="logo">TANKER</h1>
+      <p class="tagline">Turn-based artillery brawls · free, no pay-to-win</p>
+
+      <div class="menu-grid">
+        <div class="col preview-col">
+          <canvas id="preview" width="200" height="200"></canvas>
+          <label class="field">
+            <span>Your name</span>
+            <input id="name" maxlength="12" value="Player" autocomplete="off">
+          </label>
+          <div class="field">
+            <span>Hat</span>
+            <div id="hats" class="chips"></div>
+          </div>
+          <div class="field">
+            <span>Color</span>
+            <div id="colors" class="swatches"></div>
+          </div>
+          <div class="field">
+            <span>Hair</span>
+            <div id="hairs" class="swatches"></div>
+          </div>
+        </div>
+
+        <div class="col">
+          <div class="field">
+            <span>Mode</span>
+            <div id="modes" class="chips">
+              <button data-v="1v1" class="on">1 vs 1 Bot</button>
+              <button data-v="2v2">2 vs 2 (Bot ally)</button>
+              <button data-v="hotseat">2 Players (same PC)</button>
+            </div>
+          </div>
+          <label class="field hidden" id="p2field">
+            <span>Player 2 name</span>
+            <input id="name2" maxlength="12" value="Player 2" autocomplete="off">
+          </label>
+          <div class="field" id="difffield">
+            <span>Bot skill</span>
+            <div id="diffs" class="chips">
+              <button data-v="easy">Easy</button>
+              <button data-v="normal" class="on">Normal</button>
+              <button data-v="hard">Hard</button>
+            </div>
+          </div>
+          <div class="field">
+            <span>Map</span>
+            <div id="maps" class="chips"></div>
+          </div>
+          <button id="play" class="big">PLAY!</button>
+          <details class="howto">
+            <summary>How to play</summary>
+            <ul>
+              <li><b>← →</b> walk (limited by the MOVE bar each turn)</li>
+              <li><b>↑ ↓</b> change angle (0–90°)</li>
+              <li>Hold <b>SPACE</b> to charge power, release to shoot. The white ▼ marks your last power.</li>
+              <li>Watch the <b>WIND</b>: it pushes every shot.</li>
+              <li><b>1–6</b> items cost ENERGY and add delay. Rage fills when you take or deal damage: when full, use the <b>Super Shot</b>.</li>
+              <li>Turn order is by <b>delay</b>: walking a lot and using items makes your next turn come later.</li>
+              <li>Knock enemies off the islands, or blast their HP to zero. Drag the screen to look around.</li>
+            </ul>
+          </details>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="pause" class="overlay hidden">
+    <div class="card small">
+      <h2>Paused</h2>
+      <button id="resume" class="big">Resume</button>
+      <button id="quit" class="ghost">Quit to menu</button>
+    </div>
+  </div>
+
+  <div id="over" class="overlay hidden">
+    <div class="card small">
+      <h2 id="overTitle">Victory!</h2>
+      <table id="stats"></table>
+      <button id="again" class="big">Rematch</button>
+      <button id="tomenu" class="ghost">Menu</button>
+    </div>
+  </div>
+
+  <script src="js/util.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/terrain.js"></script>
+  <script src="js/art.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

@@ -66,7 +66,6 @@
     };
   });
 
-  const pips = (n) => '<span class="pips">' + [1, 2, 3, 4, 5].map((i) => `<i class="${i <= n ? 'on' : ''}"></i>`).join('') + '</span>';
   function miniCanvas(draw) {
     const c = document.createElement('canvas');
     c.width = c.height = 128;
@@ -90,16 +89,21 @@
       el.appendChild(b);
     }
   }
+  // stat rows: number + bar (bar full at 300 points for hero/weapon, 550 for totals)
+  const statRows = (st, max, extra) => TK.STAT_KEYS.map((k) => `
+    <span>${TK.STAT_SHORT[k]}</span>
+    <span class="sbar"><i style="width:${Math.min(100, (st[k] / max) * 100)}%"></i></span>
+    <span class="num">${st[k]}${extra ? extra(k) : ''}</span>`).join('');
+
   pickCards($('heroes'), TK.HERO_IDS, 'hero', (b, id) => {
     const h = TK.HEROES[id];
-    const r = TK.heroRatings(h);
     b.appendChild(miniCanvas((g) => {
       g.setTransform(2.2, 0, 0, 2.2, 60, 118);
       TK.Art.drawChibi(g, { color: sel.color, hair: sel.hair, hat: 'none', hero: id, weapon: 'bomb', angle: 20, time: 0.5, mood: 'normal' });
     }));
     b.insertAdjacentHTML('beforeend', `
-      <div class="t">${h.name}<small>${h.title}</small></div>
-      <div class="stats">${Object.entries(r).map(([k, v]) => `<span>${k}</span>${pips(v)}`).join('')}</div>
+      <div class="t">${h.name}<small>${h.title} · ${h.hp} HP</small></div>
+      <div class="stats">${statRows(h.stats, 300)}</div>
       <div class="d"><b>Perk:</b> ${h.perk}</div>`);
   });
   pickCards($('weapons'), TK.WEAPON_IDS, 'weapon', (b, id) => {
@@ -109,16 +113,26 @@
       g.rotate(-0.35);
       TK.Art.drawWeapon(g, id, sel.color, 0, 0.3);
     }));
-    const dmg = TK.clamp(Math.round(w.dmg / 70), 1, 5);
-    const blast = TK.clamp(Math.round((w.radius - 22) / 7), 1, 5);
     b.insertAdjacentHTML('beforeend', `
-      <div class="t">${w.name}</div>
-      <div class="stats"><span>DMG</span>${pips(dmg)}<span>BLAST</span>${pips(blast)}</div>
+      <div class="t">${w.name}<small><span class="focus f-${w.focus}">${TK.FOCUS_NAMES[w.focus]}</span> · Harm ${w.harm}</small></div>
+      <div class="stats">${statRows(w.stats, 300)}</div>
       <div class="d">${w.desc}<br><b>Super · ${w.superName}:</b> ${w.superDesc}</div>`);
   });
   function updateLoadout() {
+    const pick = { hero: sel.hero, weapon: sel.weapon };
     const h = TK.HEROES[sel.hero], w = TK.WEAPONS[sel.weapon];
-    $('loadout').innerHTML = `<b>${h.name}</b> the ${h.title}<br>with the <b>${w.name}</b>`;
+    const tot = TK.statsOf(pick);
+    const pct = (v) => (v >= 1 ? '+' : '') + Math.round((v - 1) * 100) + '%';
+    $('loadout').innerHTML = `
+      <div><b>${h.name}</b> the ${h.title}<br>with the <b>${w.name}</b></div>
+      <div class="stats total">${statRows(tot, 550, (k) => `<small>${h.stats[k]}+${w.stats[k]}</small>`)}</div>
+      <div class="derived">
+        <span>Harm <b>${w.harm}</b></span><span>HP <b>${h.hp}</b></span>
+        <span>Damage <b>${pct(TK.atkMult(pick))}</b></span>
+        <span>Damage taken <b>${pct(TK.defMult(pick, null))}</b></span>
+        <span>Move &amp; turns <b>${pct(TK.agiMult(pick))}</b></span>
+        <span>Crit <b>${Math.round(TK.critChance(pick) * 100)}%</b> · pierce <b>${Math.round(TK.pierce(pick) * 100)}%</b></span>
+      </div>`;
   }
   updateLoadout();
 

@@ -424,7 +424,7 @@ TK.Game = class Game {
     if (c.frozen) {
       c.frozen = false;
       c.freezeImmune = true;
-      c.delay += 100 / TK.heroOf(c).agi;
+      c.delay += 100 / TK.agiMult(c);
       this.floatText(c.x, c.y - 90, 'Frozen! Turn skipped', '#bfe9ff', 18);
       this.burst(c.x, c.y - 30, ['#ffffff', '#bfe9ff', '#6fd3ff'], 18, 180, 'debris');
       this.sfx('freeze');
@@ -439,7 +439,7 @@ TK.Game = class Game {
     const calm = Math.random() < 0.15;
     this.wind = calm ? 0 : Math.round(TK.rand(-5, 5) * 10) / 10;
     this.timer = TK.TURN_TIME;
-    this.stamina = Math.round(100 * hero.agi);
+    this.stamina = Math.round(100 * TK.agiMult(c) * (hero.move || 1));
     this.energy = hero.energy || 100;
     this.items = {};
     this.moved = 0;
@@ -478,7 +478,7 @@ TK.Game = class Game {
     if (c) {
       let add = 100 + this.moved * 0.15 + (this.firedWeapon ? TK.weaponOf(c).delay : 0);
       for (const it of TK.ITEMS) if (this.items[it.id]) add += it.delay;
-      c.delay += add / TK.heroOf(c).agi;
+      c.delay += add / TK.agiMult(c);
       c.freezeImmune = false;
     }
     this.firedWeapon = false;
@@ -611,8 +611,9 @@ TK.Game = class Game {
     const w = TK.WEAPONS[id] || TK.WEAPONS.bomb;
     const sup = p.super && !p.mini;
     const ownerHero = TK.heroOf(owner);
+    const atkM = TK.atkMult(owner);
     let R = w.radius;
-    let base = w.dmg;
+    let base = w.harm;
     if (sup) {
       if (id === 'bomb') { R *= 1.55; base *= 2; }
       else if (id === 'frost') { R *= 1.6; base *= 1.5; }
@@ -631,21 +632,21 @@ TK.Game = class Game {
       if (d > reach) continue;
       hitSet.add(c);
       const f = 1 - 0.65 * (d / reach);
-      let dmg = base * p.mult * ownerHero.atk * f * TK.rand(0.94, 1.06);
+      let dmg = base * p.mult * atkM * f * TK.rand(0.94, 1.06);
       const crit = res.hit === c;
       if (crit) dmg *= 1.2;
       if (w.heal && c.team === owner.team) { this.heal(c, Math.round(dmg * 0.5)); continue; }
-      const lucky = Math.random() < ownerHero.luck;
-      if (lucky) dmg *= 1.5;
+      const lucky = Math.random() < TK.critChance(owner);
+      if (lucky) dmg *= ownerHero.critMult || 1.5;
       this.damage(c, Math.round(dmg), owner, crit, false, lucky);
       if (c.alive && w.freeze) {
         // no freeze-lock: someone who just thawed gets to act before they can be frozen again
-        if (c.freezeImmune) this.floatText(c.x, c.y - 112, 'Freeze immune', '#bfe9ff', 16);
+        if (c.freezeImmune || TK.heroOf(c).noFreeze) this.floatText(c.x, c.y - 112, 'Freeze immune', '#bfe9ff', 16);
         else { c.frozen = true; this.floatText(c.x, c.y - 112, 'Frozen!', '#bfe9ff', 20); }
       }
       if (c.alive && w.poison) {
         c.poison = w.poisonTurns;
-        c.poisonDmg = Math.round(w.poison * (sup ? 2 : 1) * ownerHero.atk);
+        c.poisonDmg = Math.round(w.poison * (sup ? 2 : 1) * atkM);
         c.poisonSrc = owner;
       }
       c.vy = Math.min(c.vy, -140);
@@ -661,7 +662,7 @@ TK.Game = class Game {
       for (const c of targets) {
         if (TK.dist(from.x, from.y, c.x, c.y) > 700) break;
         this.bolt(from.x, from.y, c.x, c.y - TK.BODY_OFFSET);
-        this.damage(c, Math.round(base * 0.6 * p.mult * ownerHero.atk), owner, false);
+        this.damage(c, Math.round(base * 0.6 * p.mult * atkM), owner, false);
         from = { x: c.x, y: c.y - TK.BODY_OFFSET };
       }
     }
@@ -700,7 +701,7 @@ TK.Game = class Game {
 
   damage(c, dmg, src, crit, poison, lucky) {
     const vh = TK.heroOf(c);
-    dmg = Math.max(1, Math.round(dmg * vh.def));
+    dmg = Math.max(1, Math.round(dmg * TK.defMult(c, src)));
     c.hp = Math.max(0, c.hp - dmg);
     c.mood = 'hurt';
     c.moodT = 1.0;
@@ -714,8 +715,8 @@ TK.Game = class Game {
     }
     const col = poison ? '#8cff5a' : lucky ? '#d9a8ff' : crit ? '#ffdd33' : '#ff4a4a';
     this.floatText(c.x + TK.rand(-8, 8), c.y - 62, '-' + dmg, col, crit || lucky ? 34 : 28);
-    if (crit) this.floatText(c.x, c.y - 92, 'CRITICAL!', '#ffdd33', 18);
-    else if (lucky) this.floatText(c.x, c.y - 92, 'LUCKY!', '#d9a8ff', 18);
+    if (lucky) this.floatText(c.x, c.y - 92, crit ? 'DIRECT CRITICAL!' : 'CRITICAL!', '#d9a8ff', 18);
+    else if (crit) this.floatText(c.x, c.y - 92, 'DIRECT HIT!', '#ffdd33', 18);
     this.sfx('hit');
     if (c.hp <= 0) this.kill(c, 'KO!');
   }
@@ -1637,7 +1638,7 @@ TK.Game = class Game {
       TK.roundRect(ctx, bx, y, Math.max(0, bw * v), 9, 4); ctx.fill();
     };
     const hh = TK.heroOf(showC);
-    bar('MOVE', py + 26, this.phase === 'aim' ? this.stamina / (100 * hh.agi) : 0, '#5fb8f0');
+    bar('MOVE', py + 26, this.phase === 'aim' ? this.stamina / (100 * TK.agiMult(showC) * (hh.move || 1)) : 0, '#5fb8f0');
     bar('ENERGY', py + 56, this.phase === 'aim' ? this.energy / (hh.energy || 100) : 0, '#7bd64a');
     if (this.phase === 'aim') {
       ctx.textAlign = 'right'; ctx.font = font(10, 700); ctx.fillStyle = '#ffe8b0';

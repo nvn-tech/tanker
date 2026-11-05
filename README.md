@@ -44,37 +44,48 @@ Up to 6 per room (3 vs 3). Press **Enter** in game to chat.
 
 On touch devices, on-screen buttons appear during your turn.
 
+## Stats
+
+Like the classic games, your final stats are your **hero's base points + your weapon's points**:
+
+| Stat | What it does | Formula (250 = neutral) |
+| --- | --- | --- |
+| **Attack** (ATK) | More damage dealt | ±1% damage per 8 points (500 ATK = +31%) |
+| **Defense** (DEF) | Less damage taken | ±1% damage taken per 10 points (500 DEF = −25%) |
+| **Agility** (AGI) | Walk farther, turns come sooner | ±1% per 7 points (500 AGI = +36%) |
+| **Luck** (LUCK) | Critical hits (×1.5) and ignores part of the target's Defense | crit = LUCK/2000 (500 = 25%), ignores LUCK/25 % of DEF |
+| **Harm** | The weapon's fixed base damage | |
+
+Every hero has 600 base points, every weapon 400, so an average stat lands near 250.
+
 ## Heroes
 
-Pick any hero with any weapon. Stats work like the classic games: **Attack** (damage dealt),
-**Defense** (damage taken), **Agility** (how far you walk and how soon your next turn comes), **Luck**
-(chance of a *Lucky!* hit for +50%).
-
-| Hero | Class | HP | Perk |
-| --- | --- | --- | --- |
-| Bo | Rookie | 1400 | Fills the rage bar 35% faster |
-| Gwen | Knight | 1550 | Heavy armor: takes 18% less damage (slow) |
-| Kaze | Ninja | 1200 | Walks 35% farther and acts sooner |
-| Luna | Witch | 1300 | 22% chance of a Lucky hit |
-| Grog | Brute | 1750 | Hits 12% harder, very slow |
-| Pixie | Tinker | 1350 | 130 energy per turn (more items) |
+| Hero | Class | HP | ATK | DEF | AGI | LUCK | Perk |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Bo | Rookie | 1400 | 150 | 150 | 150 | 150 | Fills the rage bar 35% faster |
+| Gwen | Knight | 1500 | 120 | 260 | 100 | 120 | Can never be frozen |
+| Kaze | Ninja | 1250 | 140 | 90 | 270 | 100 | Walks 50% farther |
+| Luna | Witch | 1300 | 130 | 120 | 110 | 240 | Crits deal ×2 instead of ×1.5 |
+| Grog | Brute | 1800 | 260 | 150 | 70 | 120 | Most HP of any hero |
+| Pixie | Tinker | 1350 | 140 | 150 | 160 | 150 | 130 energy per turn |
 
 ## Weapons
 
-Each weapon has its own shot and its own **Super** (item 6, needs a full rage bar).
+Weapons have a **focus**: one stat at 250 and the rest spread out, or balanced across all four.
+Each has its own shot and its own **Super** (item 6, needs a full rage bar).
 
-| Weapon | Shot | Super |
-| --- | --- | --- |
-| Boom Bomb | Balanced damage and crater | Mega Bomb: giant blast, 2x damage |
-| Splitter | Bursts into 3 bomblets at the top of its arc | Fireworks: 6 bomblets |
-| Frost Cannon | Weak, but targets skip their next turn (then immune until they act) | Blizzard: huge freezing blast |
-| Toxic Flask | Poisons targets for 3 turns | Plague Cloud: bigger, double poison |
-| Thunder Rod | Lightning strike, heavy hit, tiny crater, half wind | Chain Storm: jumps to 2 more enemies |
-| Drill Rocket | Bores through ground before exploding | Earth Breaker: twice as deep, 1.8x damage |
-| Bouncy Ball | Bounces once, then explodes | Pinball: 3 bounces, explodes on each |
-| Medic Mortar | Hurts enemies, heals allies in the blast | Field Hospital: heals all allies 25% |
+| Weapon | Focus | Harm | ATK | DEF | AGI | LUCK | Shot | Super |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Boom Bomb | Defense | 280 | 50 | 250 | 50 | 50 | Solid damage and crater | Mega Bomb: giant blast, 2× damage |
+| Splitter | Attack | 165 | 250 | 50 | 60 | 40 | 3 bomblets at the top of its arc | Fireworks: 6 bomblets |
+| Drill Rocket | Attack | 250 | 250 | 70 | 40 | 40 | Bores through ground first | Earth Breaker: 2× depth, 1.8× damage |
+| Frost Cannon | Agility | 160 | 40 | 60 | 250 | 50 | Target skips its next turn | Blizzard: huge freezing blast |
+| Medic Mortar | Agility | 220 | 50 | 60 | 250 | 40 | Heals allies in the blast | Field Hospital: heals all allies 25% |
+| Thunder Rod | Luck | 320 | 70 | 30 | 50 | 250 | Lightning, tiny crater, half wind | Chain Storm: jumps to 2 more enemies |
+| Toxic Flask | Luck | 160 | 60 | 40 | 50 | 250 | Poisons for 3 turns | Plague Cloud: bigger, double poison |
+| Bouncy Ball | Balanced | 265 | 100 | 100 | 100 | 100 | Bounces once, then explodes | Pinball: 3 bounces, explodes on each |
 
-Heroes and weapons are defined as data in `js/content.js`, so tuning numbers or adding new ones is easy.
+All of this is data in `js/content.js` (stats, formulas, perks), so tuning is a one-file change.
 
 ## Mechanics
 

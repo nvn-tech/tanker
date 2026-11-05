@@ -256,3 +256,22 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .loadout { text-align: center; font-size: 14px; line-height: 1.35; margin-bottom: 4px; }
 .loadout b { color: var(--sun); }
 .team li .sub { font-size: 11px; opacity: 0.7; white-space: nowrap; }
+
+/* ---------- stat rows ---------- */
+.stats { grid-template-columns: 34px 1fr auto; gap: 2px 6px; }
+.stats .sbar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.stats .sbar i { display: block; height: 100%; background: linear-gradient(90deg, #ffb627, #ffe45c); border-radius: 3px; }
+.stats .num { font-variant-numeric: tabular-nums; text-align: right; min-width: 26px; }
+.stats.total { width: 100%; margin: 8px 0 6px; font-size: 12px; text-align: left; }
+.stats.total .sbar { height: 8px; }
+.stats.total .sbar i { background: linear-gradient(90deg, #3fa7ff, #9fe3ff); }
+.stats.total small { opacity: 0.6; font-weight: 600; margin-left: 4px; }
+.derived { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; font-size: 11.5px; text-align: left; opacity: 0.9; }
+.derived b { color: var(--sun); font-variant-numeric: tabular-nums; }
+.focus { display: inline-block; padding: 0 6px; border-radius: 999px; letter-spacing: 0.5px; color: #1b120b; }
+.f-atk { background: #ff7a6b; }
+.f-def { background: #9fb0c6; }
+.f-agi { background: #7bd64a; }
+.f-luck { background: #c7a0ff; }
+.f-balanced { background: #ffe45c; }
+.loadout { width: 100%; }

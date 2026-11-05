@@ -1,0 +1,41 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Bagel+Fat+One&family=Nunito:wght@700;800&display=swap" rel="stylesheet">
+<style>body{margin:0}</style></head><body>
+<canvas id="c" width="1360" height="1800"></canvas>
+<script src="../js/util.js"></script>
+<script src="../js/content.js"></script>
+<script src="../js/art.js"></script>
+<script src="heroes.js"></script>
+<script>
+window.renderSheet = async () => {
+  await document.fonts.ready;
+  await document.fonts.load('40px "Bagel Fat One"'); await document.fonts.load('800 16px Nunito');
+  const c = document.getElementById('c'), g = c.getContext('2d');
+  g.fillStyle = '#f4ead5'; g.fillRect(0, 0, c.width, c.height);
+  const ids = ['rookie','knight','ninja','witch','brute','tinker'];
+  const names = { rookie: ['Bo', 'Rookie'], knight: ['Gwen', 'Knight'], ninja: ['Kaze', 'Ninja'], witch: ['Luna', 'Witch'], brute: ['Grog', 'Brute'], tinker: ['Pixie', 'Tinker'] };
+  const poses = ['idle','aim','hit','win'];
+  const labels = ['Idle', 'Aiming', 'Hit', 'Victory'];
+  const rowH = 290, x0 = 250, colW = 277;
+  g.font = '800 16px Nunito'; g.fillStyle = '#8a6a4a'; g.textAlign = 'center';
+  labels.forEach((l, i) => g.fillText(l.toUpperCase(), x0 + colW * i + colW / 2, 28));
+  ids.forEach((id, r) => {
+    const y0 = 50 + r * rowH;
+    // paper card stripe
+    g.save(); g.shadowColor = 'rgba(40,30,20,0.25)'; g.shadowOffsetY = 5; g.shadowBlur = 6;
+    g.fillStyle = r % 2 ? '#fffaf0' : '#f9f1e1'; g.fillRect(20, y0, 1320, rowH - 16); g.restore();
+    g.textAlign = 'left'; g.fillStyle = '#e4572e'; g.font = '44px "Bagel Fat One"'; g.fillText(names[id][0], 48, y0 + 120);
+    g.fillStyle = '#2a9d8f'; g.font = '800 15px Nunito'; g.fillText(names[id][1].toUpperCase(), 50, y0 + 146);
+    g.fillStyle = '#2b2118'; g.font = '700 14px Nunito';
+    const q = HERO_DEFS[id].quote; const words = q.split(' '); let line = '', ly = y0 + 176;
+    for (const w of words) { if (g.measureText(line + w).width > 170) { g.fillText(line, 50, ly); ly += 19; line = ''; } line += w + ' '; } g.fillText(line, 50, ly);
+    poses.forEach((p, i) => {
+      // ground strip
+      const cx = x0 + colW * i + colW / 2, gy = y0 + rowH - 50;
+      g.fillStyle = '#2a9d8f'; g.beginPath(); g.ellipse(cx, gy + 6, 90, 10, 0, 0, 7); g.fill();
+      g.save(); g.translate(cx - 10, gy); g.scale(1.55, 1.55); drawHero(g, id, p, { t: 0.6 + i }); g.restore();
+    });
+  });
+  return true;
+};
+</script></body></html>

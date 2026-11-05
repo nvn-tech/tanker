@@ -65,6 +65,21 @@
             <div id="maps" class="chips"></div>
           </div>
           <button id="play" class="big">PLAY!</button>
+          <div id="onlinePanel" class="online hidden">
+            <button id="createRoom" class="big">CREATE ROOM</button>
+            <div class="join-row">
+              <input id="joinCode" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false">
+              <button id="joinRoom" class="mid">JOIN</button>
+            </div>
+            <p id="menuMsg" class="msg" role="status"></p>
+            <details class="howto">
+              <summary>Server</summary>
+              <label class="field">
+                <span>Multiplayer server address</span>
+                <input id="serverUrl" autocomplete="off" spellcheck="false">
+              </label>
+            </details>
+          </div>
           <details class="howto">
             <summary>How to play</summary>
             <ul>
@@ -75,12 +90,57 @@
               <li><b>1–6</b> items cost ENERGY and add delay. Rage fills when you take or deal damage: when full, use the <b>Super Shot</b>.</li>
               <li>Turn order is by <b>delay</b>: walking a lot and using items makes your next turn come later.</li>
               <li>Knock enemies off the islands, or blast their HP to zero. Drag the screen to look around.</li>
+              <li><b>Online:</b> create a room, send the 4-letter code to friends, pick teams, add bots if you like. Press <b>Enter</b> to chat in game.</li>
             </ul>
           </details>
         </div>
       </div>
     </div>
   </div>
+
+  <div id="lobby" class="overlay hidden">
+    <div class="card">
+      <div class="lobby-head">
+        <div>
+          <span class="label">Room code</span>
+          <div id="roomCode" class="code">----</div>
+        </div>
+        <button id="copyLink" class="ghost">Copy invite link</button>
+      </div>
+      <div class="teams">
+        <div class="team t0">
+          <h3>Blue team</h3>
+          <ul id="team0"></ul>
+          <div class="team-actions">
+            <button data-team="0" class="join-team ghost">Join blue</button>
+            <button data-team="0" class="add-bot ghost">+ Bot</button>
+          </div>
+        </div>
+        <div class="team t1">
+          <h3>Red team</h3>
+          <ul id="team1"></ul>
+          <div class="team-actions">
+            <button data-team="1" class="join-team ghost">Join red</button>
+            <button data-team="1" class="add-bot ghost">+ Bot</button>
+          </div>
+        </div>
+      </div>
+      <div id="hostSettings">
+        <div class="field"><span>Map</span><div id="lobbyMaps" class="chips"></div></div>
+        <div class="field"><span>Bot skill</span><div id="lobbyDiffs" class="chips"></div></div>
+      </div>
+      <p id="lobbyInfo" class="msg"></p>
+      <button id="startOnline" class="big">START</button>
+      <div class="chat">
+        <div id="lobbyChat" class="chat-log"></div>
+        <input id="lobbyChatInput" maxlength="140" placeholder="Say something and press Enter" autocomplete="off">
+      </div>
+      <button id="leaveRoom" class="ghost">Leave room</button>
+    </div>
+  </div>
+
+  <div id="chatLog" class="ingame-chat"></div>
+  <input id="chatInput" class="ingame-input hidden" maxlength="140" placeholder="Chat: Enter to send, Esc to cancel" autocomplete="off">
 
   <div id="pause" class="overlay hidden">
     <div class="card small">
@@ -95,6 +155,7 @@
       <h2 id="overTitle">Victory!</h2>
       <table id="stats"></table>
       <button id="again" class="big">Rematch</button>
+      <button id="toLobby" class="big hidden">Back to room</button>
       <button id="tomenu" class="ghost">Menu</button>
     </div>
   </div>
@@ -104,6 +165,7 @@
   <script src="js/terrain.js"></script>
   <script src="js/art.js"></script>
   <script src="js/game.js"></script>
+  <script src="js/net.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

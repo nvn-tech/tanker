@@ -1,0 +1,10 @@
+# One-click deploy on Render (https://render.com): New > Blueprint > pick this repo.
+# Serves the game and the multiplayer server from the same URL.
+services:
+  - type: web
+    name: tanker
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health

@@ -164,3 +164,64 @@ button.ghost {
 #stats td:first-child { text-align: left; }
 #stats .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
 #stats tr.win td { color: var(--sun); }
+
+/* ---------- online ---------- */
+button.mid {
+  font: inherit; font-size: 20px; font-weight: 700;
+  padding: 8px 18px; border-radius: 14px;
+  border: 3px solid #fff3b0; color: #3a1d08;
+  background: linear-gradient(180deg, #9fe3ff, #3fa7ff);
+  box-shadow: 0 4px 0 #1d5f9e; cursor: pointer;
+}
+button.mid:active { transform: translateY(3px); box-shadow: 0 1px 0 #1d5f9e; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+.join-row { display: flex; gap: 10px; margin-top: 12px; }
+.join-row input { text-transform: uppercase; letter-spacing: 6px; font-size: 22px; font-weight: 700; text-align: center; }
+.msg { min-height: 1.3em; margin: 8px 0 0; color: #ffd0a0; font-size: 14px; }
+
+.lobby-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.label { font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; opacity: 0.75; }
+.code {
+  font-size: 48px; font-weight: 700; letter-spacing: 10px; line-height: 1.1;
+  color: var(--sun); -webkit-text-stroke: 2px #5a2e12; text-shadow: 0 4px 0 #5a2e12;
+  user-select: text;
+}
+.teams { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 0; }
+@media (max-width: 560px) { .teams { grid-template-columns: 1fr; } }
+.team { border-radius: 16px; padding: 10px 12px; background: rgba(0, 0, 0, 0.25); border: 2px solid; min-width: 0; }
+.team.t0 { border-color: var(--blue); }
+.team.t1 { border-color: var(--red); }
+.team h3 { margin: 0 0 8px; font-size: 18px; }
+.team.t0 h3 { color: #9fd4ff; }
+.team.t1 h3 { color: #ffaaad; }
+.team ul { list-style: none; margin: 0; padding: 0; min-height: 70px; }
+.team li { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid rgba(201, 162, 106, 0.2); }
+.team li .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #1b120b; flex: none; }
+.team li .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team li .tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: rgba(255, 228, 92, 0.2); color: var(--sun); }
+.team li .x { background: none; border: none; color: #ffaaad; font: inherit; font-size: 16px; cursor: pointer; padding: 0 4px; }
+.team-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.team-actions .ghost { margin-top: 8px; padding: 5px 12px; font-size: 14px; }
+
+.chat { margin-top: 14px; }
+.chat-log {
+  height: 84px; overflow-y: auto; padding: 8px 10px; margin-bottom: 8px;
+  border-radius: 12px; background: rgba(0, 0, 0, 0.3); font-size: 14px; line-height: 1.4;
+  user-select: text;
+}
+.chat-log .sys { opacity: 0.6; font-style: italic; }
+.chat-log b.c0, .ingame-chat b.c0 { color: #9fd4ff; }
+.chat-log b.c1, .ingame-chat b.c1 { color: #ffaaad; }
+
+.ingame-chat {
+  position: fixed; left: 12px; bottom: 150px; z-index: 5;
+  width: min(360px, 70vw); pointer-events: none;
+  font-size: 14px; line-height: 1.35; color: #fff;
+  text-shadow: 0 1px 2px #000, 0 0 3px #000;
+}
+.ingame-chat div { transition: opacity 1s; }
+.ingame-chat div.fade { opacity: 0; }
+.ingame-input {
+  position: fixed; left: 12px; bottom: 120px; z-index: 6;
+  width: min(360px, 80vw); font-size: 15px; padding: 6px 10px;
+}

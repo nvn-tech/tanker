@@ -1,0 +1,16 @@
+{
+  "name": "tanker",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Free turn-based artillery brawler for the browser, with online rooms.",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

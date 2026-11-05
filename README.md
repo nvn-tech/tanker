@@ -7,9 +7,27 @@ Plain HTML5 canvas + vanilla JavaScript. No build step, no dependencies.
 
 ## Play
 
-- Open `index.html` directly in a browser, **or**
-- serve the folder: `python3 -m http.server` and open http://localhost:8000, **or**
-- enable GitHub Pages (Settings → Pages → Source: *GitHub Actions*); the included workflow deploys every push to `main`.
+**Offline (vs bots / same PC):** open `index.html` in a browser. No server needed.
+
+**Online multiplayer:** run the Node server. It serves the game and the rooms:
+
+```bash
+npm install
+npm start          # http://localhost:8080
+```
+
+Open the page, pick **Online**, **Create room**, and send friends the 4-letter code
+(or the invite link). Everyone picks a team, the host can add bots, then **Start**.
+Up to 6 per room (3 vs 3). Press **Enter** in game to chat.
+
+### Hosting it for friends
+
+- **Render (free):** New → Blueprint → select this repo. `render.yaml` sets everything up.
+  Share the `https://<your-app>.onrender.com` URL.
+- **Any Node host** (Fly.io, Railway, a VPS): `npm install && npm start`, `PORT` env var is respected.
+- **GitHub Pages** can host the page too (Settings → Pages → Source: *GitHub Actions*), but Pages
+  can't run the server. Set `TK.DEFAULT_SERVER` in `js/net.js` to your server's `wss://…/ws`
+  address, or players can paste it under *Online → Server* in the menu.
 
 ## Controls
 
@@ -39,7 +57,7 @@ On touch devices, on-screen buttons appear during your turn.
   5. Teleport — you fly to where the shot lands
   6. Super Shot — needs a full RAGE bar (filled by dealing/taking damage): bigger blast, 2× damage
 - **Direct hits** do +20% (critical).
-- **Modes:** 1v1 vs bot, 2v2 with a bot ally, or 2 players on the same PC. Bots come in Easy / Normal / Hard.
+- **Modes:** 1v1 vs bot, 2v2 with a bot ally, 2 players on the same PC, or online rooms (up to 3v3, bots can fill seats). Bots come in Easy / Normal / Hard.
 
 ## Code layout
 
@@ -51,15 +69,27 @@ js/audio.js       synthesized sound effects (WebAudio)
 js/terrain.js     island generation, destructible mask, themes
 js/art.js         sky, chibi characters, hats, bombs
 js/game.js        game loop, physics, turns, items, bot AI, HUD
-js/main.js        menu wiring
+js/net.js         WebSocket client + server address setting
+js/main.js        menu, lobby and chat wiring
+server/server.js  Node server: static files + rooms + message relay
 ```
+
+### How online play works
+
+The room's host runs the real game in their browser (same code as offline). Other players
+send only their inputs (walk, aim, fire with exact power, items, pass); the host streams the game
+state ~20×/s plus effect events (explosions, terrain cuts, damage numbers), and the other players'
+screens mirror it with smoothing. The server only manages rooms and relays messages. If a
+player drops, a bot takes over their character; if the host leaves, the room closes. Keep the host's
+tab open: a background ticker keeps the game running when the tab is hidden, but at reduced smoothness.
 
 The world runs at a fixed 120 Hz step; the bot aims by simulating shots with the exact same
 step function (`TK.stepShot`), then adds difficulty-based error.
 
 ## Ideas for next steps
 
-- Online multiplayer (WebSocket room server)
+- Server-authoritative simulation (no host advantage, survives host leaving)
+- Public room list / quick match
 - More weapons/characters with distinct projectiles
 - Map editor, more themes
 - Progression that stays cosmetic-only

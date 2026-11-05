@@ -60,12 +60,43 @@ TK.Game = class Game {
     this.buttons = [];
     this.touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
     this.onGameOver = null;
+    // online play: 'local' (offline), 'host' (runs the real game) or 'client' (mirrors the host)
+    this.role = 'local';
+    this.myId = null;
+    this.net = null;
+    this.outbox = [];
+    this.sendT = 0;
+    this.projSeq = 0;
+    this.remoteMove = 0;
     this.resize();
     window.addEventListener('resize', () => this.resize());
     this.bindInput();
     this.makeBackdrop();
     this.last = performance.now();
     requestAnimationFrame((t) => this.loop(t));
+    this.startBackgroundTicker();
+  }
+
+  // Browsers pause requestAnimationFrame in hidden tabs. A host must keep the
+  // game running for everyone, so a tiny worker keeps ticking the simulation.
+  startBackgroundTicker() {
+    try {
+      const src = 'setInterval(function(){postMessage(0)},50)';
+      const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+      w.onmessage = () => {
+        if (document.hidden && this.role === 'host') this.advance(performance.now(), 1.0);
+      };
+    } catch (e) { /* workers unavailable: the host just needs to keep the tab visible */ }
+  }
+
+  netSend(obj) {
+    if (this.net) this.net.send(obj);
+  }
+
+  // Whether this browser controls character c right now.
+  isMine(c) {
+    if (!c || !c.human) return false;
+    return this.role === 'local' ? true : c.pid === this.myId;
   }
 
   // ---------- setup ----------
@@ -101,9 +132,19 @@ TK.Game = class Game {
 
   start(cfg) {
     this.cfg = cfg;
+    this.role = cfg.role || 'local';
+    this.myId = cfg.myId == null ? null : cfg.myId;
+    this.outbox = [];
+    this.projSeq = 0;
+    this.remoteMove = 0;
+    this.sentFire = false;
+    this.menuOpen = false;
     let theme = cfg.theme;
-    if (theme === 'random') theme = TK.pick(Object.keys(TK.THEMES));
-    const seed = (Math.random() * 1e9) | 0;
+    const seed = cfg.seed != null ? cfg.seed : (Math.random() * 1e9) | 0;
+    if (theme === 'random' || !TK.THEMES[theme]) {
+      const keys = Object.keys(TK.THEMES);
+      theme = keys[Math.floor(TK.mulberry32(seed + 7)() * keys.length)];
+    }
     this.themeKey = theme;
     this.terrain = new TK.Terrain(TK.WORLD_W, TK.WORLD_H, theme, seed);
     this.sky = TK.Art.makeSky(TK.THEMES[theme], seed);
@@ -120,7 +161,10 @@ TK.Game = class Game {
       color: TK.pick(TK.COLORS), hair: TK.pick(TK.HAIR), hat: TK.pick(TK.HATS),
     });
     let roster;
-    if (cfg.mode === 'hotseat') {
+    if (cfg.roster) {
+      // online: roster comes from the server, identical for everyone
+      roster = cfg.roster.map((r) => ({ ...r, human: !r.bot }));
+    } else if (cfg.mode === 'hotseat') {
       roster = [
         { ...p, team: 0, human: true },
         { ...cfg.player2, team: 1, human: true },
@@ -132,13 +176,11 @@ TK.Game = class Game {
     }
 
     const spots = this.terrain.spawnPoints(roster.length);
-    // 1v1: left vs right. 2v2: interleave so teams are mixed across the map.
-    const order = roster.length === 4 ? [0, 2, 1, 3] : [0, 1];
-    if (Math.random() < 0.5) order.reverse();
+    const order = this.spawnOrder(roster, TK.mulberry32(seed + 13));
     this.chars = roster.map((r, i) => {
       const s = spots[order[i]];
       return {
-        id: i, name: r.name || 'Player', team: r.team, human: r.human,
+        id: i, pid: r.pid == null ? null : r.pid, name: r.name || 'Player', team: r.team, human: r.human,
         color: r.color, hair: r.hair, hat: r.hat,
         x: s.x, y: s.y, vy: 0, grounded: false,
         facing: s.x < TK.WORLD_W / 2 ? 1 : -1, angle: 45,
@@ -155,9 +197,26 @@ TK.Game = class Game {
     this.wind = 0;
     this.turnNo = 0;
     this.cam.free = false;
-    const c0 = this.chars[0];
+    const c0 = this.chars.find((c) => this.isMine(c)) || this.chars[0];
     this.cam.x = c0.x - this.viewW() / 2;
     this.cam.y = c0.y - this.viewH() / 2;
+  }
+
+  // Which spawn slot (left to right) each roster entry gets: teams alternate
+  // across the map so nobody starts next to only allies.
+  spawnOrder(roster, rng) {
+    const byTeam = [[], []];
+    roster.forEach((r, i) => byTeam[r.team === 1 ? 1 : 0].push(i));
+    for (const t of byTeam) t.sort(() => rng() - 0.5);
+    const first = rng() < 0.5 ? 0 : 1;
+    const seq = [];
+    while (byTeam[0].length || byTeam[1].length) {
+      for (const t of [first, 1 - first]) if (byTeam[t].length) seq.push(byTeam[t].shift());
+    }
+    // 1v1 / 2v2 with even teams: interleaving gives L-R alternation. seq[slot] = roster index.
+    const order = new Array(roster.length);
+    seq.forEach((ri, slot) => { order[ri] = slot; });
+    return order;
   }
 
   // ---------- input ----------
@@ -225,14 +284,15 @@ TK.Game = class Game {
   }
 
   humanTurn() {
-    return this.state === 'play' && this.phase === 'aim' && this.active && this.active.human;
+    return this.state === 'play' && this.phase === 'aim' && this.isMine(this.active) &&
+      !(this.role === 'client' && this.sentFire);
   }
 
   pressed(code) {
-    if (!this.humanTurn()) return;
+    if (!this.humanTurn() || this.menuOpen) return;
     const c = this.active;
-    if (code === 'ArrowUp' || code === 'KeyW') { c.angle = TK.clamp(c.angle + 1, 0, 90); this.hold.up = 0; }
-    if (code === 'ArrowDown' || code === 'KeyS') { c.angle = TK.clamp(c.angle - 1, 0, 90); this.hold.down = 0; }
+    if (code === 'ArrowUp' || code === 'KeyW') { c.angle = TK.clamp(Math.round(c.angle) + 1, 0, 90); this.hold.up = 0; }
+    if (code === 'ArrowDown' || code === 'KeyS') { c.angle = TK.clamp(Math.round(c.angle) - 1, 0, 90); this.hold.down = 0; }
     if (code === 'Space') this.startCharge();
     if (code === 'KeyP') this.passTurn();
     const item = TK.ITEMS.find((it) => 'Digit' + it.key === code || 'Numpad' + it.key === code);
@@ -252,10 +312,18 @@ TK.Game = class Game {
 
   passTurn() {
     if (this.phase !== 'aim' || this.charging) return;
+    if (this.role === 'client') { this.netSend({ t: 'input', d: { k: 'pass' } }); this.sentFire = true; return; }
     this.endTurn();
   }
 
   togglePause() {
+    // Online games can't be paused for everyone: just show/hide the menu.
+    if (this.role !== 'local' && (this.state === 'play' || this.state === 'over')) {
+      this.menuOpen = !this.menuOpen;
+      this.keys.clear();
+      this.onPause && this.onPause(this.menuOpen);
+      return;
+    }
     if (this.state === 'play') { this.state = 'paused'; TK.Sfx.stopCharge(); this.keys.clear(); this.onPause && this.onPause(true); }
     else if (this.state === 'paused') { this.state = 'play'; this.onPause && this.onPause(false); }
   }
@@ -274,8 +342,12 @@ TK.Game = class Game {
 
   useItem(id) {
     if (!this.canUse(id)) {
-      if (this.active && (this.active.human)) TK.Sfx.play('deny');
+      if (this.isMine(this.active)) TK.Sfx.play('deny');
       return false;
+    }
+    if (this.role === 'client') {
+      this.netSend({ t: 'input', d: { k: 'item', id } });
+      return true;
     }
     const it = TK.ITEMS.find((i) => i.id === id);
     this.items[id] = true;
@@ -286,11 +358,11 @@ TK.Game = class Game {
       c.hp += amt;
       this.floatText(c.x, c.y - 70, '+' + amt, '#5dff7a', 26);
       this.burst(c.x, c.y - 25, ['#7dff9a', '#ffffff'], 16, 120, 'spark');
-      TK.Sfx.play('heal');
+      this.sfx('heal');
     } else {
       if (id === 'super') c.rage = 0;
       this.floatText(c.x, c.y - 74, it.name + '!', '#ffe45c', 18);
-      TK.Sfx.play('item');
+      this.sfx('item');
     }
     return true;
   }
@@ -315,11 +387,29 @@ TK.Game = class Game {
     this.charging = false;
     this.power = 0;
     this.phase = 'aim';
+    this.remoteMove = 0;
+    this.onTurnStart();
+    if (!c.human) this.startAI();
+  }
+
+  startAI() {
+    this.ai = { stage: 'walk', t: 0.5 + Math.random() * 0.4, walk: (Math.random() - 0.5) * 80 };
+  }
+
+  // Per-viewer turn intro (banner, sound, camera). Runs on every client.
+  onTurnStart() {
+    const c = this.active;
     this.cam.free = false;
-    this.banner = { text: c.human ? (this.cfg.mode === 'hotseat' ? c.name + "'s turn!" : 'Your turn!') : c.name + "'s turn", t: 0 };
+    this.sentFire = false;
+    this.charging = false;
+    this.power = 0;
+    this.hold.up = this.hold.down = 0;
+    let text;
+    if (this.isMine(c)) text = this.cfg.mode === 'hotseat' ? c.name + "'s turn!" : 'Your turn!';
+    else text = c.name + "'s turn";
+    this.banner = { text, t: 0, mine: this.isMine(c) };
     this.lastTick = 99;
     TK.Sfx.play('turn');
-    if (!c.human) this.ai = { stage: 'walk', t: 0.5 + Math.random() * 0.4, walk: (Math.random() - 0.5) * 80 };
   }
 
   endTurn() {
@@ -343,10 +433,32 @@ TK.Game = class Game {
       this.state = 'over';
       this.phase = 'over';
       TK.Sfx.stopCharge();
-      const humanWon = this.chars.some((c) => c.human && c.team === winner);
-      TK.Sfx.play(humanWon || this.cfg.mode === 'hotseat' ? 'win' : 'lose');
-      setTimeout(() => this.onGameOver && this.onGameOver(winner, this.chars, this.cfg), 1400);
+      this.emit(['o', winner, this.chars.map((c) => [c.stats.dmg, c.stats.hits, c.stats.taken, c.hp])]);
+      this.sendSnapshot();
+      this.finishGame(winner);
     }
+  }
+
+  finishGame(winner) {
+    const mine = this.chars.filter((c) => this.isMine(c));
+    const won = mine.some((c) => c.team === winner);
+    TK.Sfx.play(won || this.cfg.mode === 'hotseat' ? 'win' : 'lose');
+    setTimeout(() => this.onGameOver && this.onGameOver(winner, this.chars, this.cfg), 1400);
+  }
+
+  // Client: the host announced the end of the match.
+  netGameOver(winner, stats) {
+    if (this.state === 'over') return;
+    stats.forEach((s, i) => {
+      const c = this.chars[i];
+      if (!c) return;
+      c.stats = { dmg: s[0], hits: s[1], taken: s[2] };
+      c.hp = s[3];
+    });
+    this.state = 'over';
+    this.phase = 'over';
+    TK.Sfx.stopCharge();
+    this.finishGame(winner);
   }
 
   // ---------- firing ----------
@@ -354,6 +466,14 @@ TK.Game = class Game {
     const c = this.active;
     TK.Sfx.stopCharge();
     this.charging = false;
+    if (this.role === 'client') {
+      // the host fires for us; send exactly what we aimed
+      this.netSend({ t: 'input', d: { k: 'fire', a: c.angle, f: c.facing, p: this.power } });
+      this.sentFire = true;
+      this.shotPower = this.power;
+      c.lastPower = this.power;
+      return;
+    }
     c.lastPower = this.power;
     this.shotPower = this.power;
     this.volleys = this.items.double ? 2 : 1;
@@ -389,13 +509,14 @@ TK.Game = class Game {
       p.super = !!this.items.super;
       p.teleport = !!this.items.teleport;
       p.trailT = 0;
+      p.id = ++this.projSeq;
       this.projectiles.push(p);
     }
     this.volleys--;
     c.recoil = 1;
     const m = this.muzzle(c, c.angle);
     this.burst(m.x, m.y, ['#fff3b0', '#ffb347', '#ffffff'], 8, 140, 'spark');
-    TK.Sfx.play('shoot');
+    this.sfx('shoot');
   }
 
   explode(p, res) {
@@ -410,14 +531,13 @@ TK.Game = class Game {
       owner.y = ty;
       owner.vy = 0;
       this.burst(owner.x, owner.y - 20, ['#b9a1ff', '#ffffff'], 24, 200, 'spark');
-      this.rings.push({ x: owner.x, y: owner.y - 20, r: 6, max: 50, life: 0.4, t: 0, color: '#c7b5ff' });
-      TK.Sfx.play('teleport');
+      this.ring(owner.x, owner.y - 20, 6, 50, 0.4, '#c7b5ff');
+      this.sfx('teleport');
       return;
     }
     if (res.out) return;
     const R = TK.BLAST_R * (p.super ? 1.55 : 1);
-    this.terrain.carve(res.x, res.y, R);
-    this.miniDirty = true;
+    this.carve(res.x, res.y, R);
     const reach = R + TK.BODY_R;
     for (const c of this.chars) {
       if (!c.alive) continue;
@@ -436,9 +556,9 @@ TK.Game = class Game {
     this.burst(res.x, res.y, ['#fff3b0', '#ffd23f', '#ff8a3c', '#ff5a3c'], p.super ? 34 : 22, p.super ? 320 : 240, 'fire');
     this.burst(res.x, res.y, ['#7d6d63', '#9a8c82', '#5e524b'], 12, 80, 'smoke');
     this.burst(res.x, res.y, [t.dirt, t.top, t.rim], 18, 300, 'debris');
-    this.rings.push({ x: res.x, y: res.y, r: 8, max: R * 1.4, life: 0.35, t: 0, color: '#fff7c0' });
-    this.cam.shake = Math.min(18, this.cam.shake + (p.super ? 16 : 9));
-    TK.Sfx.play(p.super ? 'bigboom' : 'boom');
+    this.ring(res.x, res.y, 8, R * 1.4, 0.35, '#fff7c0');
+    this.shake(p.super ? 16 : 9);
+    this.sfx(p.super ? 'bigboom' : 'boom');
   }
 
   damage(c, dmg, src, crit) {
@@ -455,7 +575,7 @@ TK.Game = class Game {
     }
     this.floatText(c.x + TK.rand(-8, 8), c.y - 62, '-' + dmg, crit ? '#ffdd33' : '#ff4a4a', crit ? 34 : 28);
     if (crit) this.floatText(c.x, c.y - 92, 'CRITICAL!', '#ffdd33', 18);
-    TK.Sfx.play('hit');
+    this.sfx('hit');
     if (c.hp <= 0) this.kill(c, 'KO!');
   }
 
@@ -468,7 +588,35 @@ TK.Game = class Game {
   }
 
   // ---------- effects ----------
+  // Visual/audio effects. When hosting an online game each one is also queued
+  // as an event so the other players replay it on their screens.
+  emit(ev) {
+    if (this.role === 'host') this.outbox.push(ev);
+  }
+
+  sfx(name) {
+    TK.Sfx.play(name);
+    this.emit(['s', name]);
+  }
+
+  ring(x, y, r, max, life, color) {
+    this.rings.push({ x, y, r, max, life, t: 0, color });
+    this.emit(['r', Math.round(x), Math.round(y), r, Math.round(max), life, color]);
+  }
+
+  shake(amount) {
+    this.cam.shake = Math.min(18, this.cam.shake + amount);
+    this.emit(['k', amount]);
+  }
+
+  carve(x, y, r) {
+    this.terrain.carve(x, y, r);
+    this.miniDirty = true;
+    this.emit(['c', Math.round(x * 10) / 10, Math.round(y * 10) / 10, r]);
+  }
+
   burst(x, y, colors, n, speed, type) {
+    this.emit(['b', Math.round(x), Math.round(y), colors, n, speed, type]);
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const s = speed * (0.3 + Math.random() * 0.7);
@@ -484,25 +632,49 @@ TK.Game = class Game {
 
   floatText(x, y, text, color, size) {
     this.texts.push({ x, y, text, color, size, t: 0, vy: -60 });
+    this.emit(['t', Math.round(x), Math.round(y), text, color, size]);
+  }
+
+  // Replay an effect event received from the host.
+  applyEvent(e) {
+    switch (e[0]) {
+      case 's': TK.Sfx.play(e[1]); break;
+      case 'r': this.ring(e[1], e[2], e[3], e[4], e[5], e[6]); break;
+      case 'k': this.shake(e[1]); break;
+      case 'c': this.carve(e[1], e[2], e[3]); break;
+      case 'b': this.burst(e[1], e[2], e[3], e[4], e[5], e[6]); break;
+      case 't': this.floatText(e[1], e[2], e[3], e[4], e[5]); break;
+      case 'o': this.netGameOver(e[1], e[2]); break;
+    }
   }
 
   // ---------- simulation step ----------
   loop(ts) {
-    const dt = Math.min(0.05, (ts - this.last) / 1000);
-    this.last = ts;
+    const dt = this.advance(ts, 0.05);
+    this.updateCamera(dt);
+    this.render();
+    requestAnimationFrame((t) => this.loop(t));
+  }
+
+  advance(now, maxDt) {
+    const dt = Math.max(0, Math.min(maxDt, (now - this.last) / 1000));
+    this.last = now;
     if (this.state !== 'paused') {
       this.acc += dt;
+      const cap = Math.ceil(maxDt / TK.DT) + 2;
       let steps = 0;
-      while (this.acc >= TK.DT && steps < 12) {
+      while (this.acc >= TK.DT && steps < cap) {
         this.step(TK.DT);
         this.acc -= TK.DT;
         steps++;
       }
-      if (steps >= 12) this.acc = 0;
+      if (steps >= cap) this.acc = 0;
     }
-    this.updateCamera(dt);
-    this.render();
-    requestAnimationFrame((t) => this.loop(t));
+    if (this.role === 'host' && (this.state === 'play' || this.state === 'over')) {
+      this.sendT += dt;
+      if (this.sendT >= 0.05 || this.outbox.length > 40) { this.sendT = 0; this.sendSnapshot(); }
+    }
+    return dt;
   }
 
   step(dt) {
@@ -524,6 +696,7 @@ TK.Game = class Game {
     if (this.banner) this.banner.t += dt;
 
     if (this.state !== 'play' && this.state !== 'over') return;
+    if (this.role === 'client') { this.clientStep(dt); return; }
     for (const c of this.chars) {
       this.updateBody(c, dt);
       if (c.moodT > 0) { c.moodT -= dt; if (c.moodT <= 0) c.mood = 'normal'; }
@@ -577,7 +750,7 @@ TK.Game = class Game {
       if (c.alive) {
         this.floatText(c.x, T.h - 40, c.name + ' fell!', '#ffffff', 22);
         this.kill(c, 'Bye!');
-        TK.Sfx.play('lose');
+        this.sfx('lose');
       }
       c.gone = true;
       c.grounded = true;
@@ -609,37 +782,214 @@ TK.Game = class Game {
     const c = this.active;
     if (!c.alive) { this.endTurn(); return; }
     this.timer -= dt;
-    const sec = Math.ceil(this.timer);
-    if (sec <= 5 && sec !== this.lastTick && sec > 0) { this.lastTick = sec; TK.Sfx.play('tick'); }
+    this.tickSound();
     if (this.timer <= 0) {
       if (this.charging) this.fire();
       else { this.floatText(c.x, c.y - 80, 'Time up!', '#ffffff', 20); this.endTurn(); }
       return;
     }
-    if (c.human) {
-      const k = this.keys;
-      if (!this.charging) {
-        const left = k.has('ArrowLeft') || k.has('KeyA');
-        const right = k.has('ArrowRight') || k.has('KeyD');
-        if (left && !right) this.walk(c, -1, dt);
-        else if (right && !left) this.walk(c, 1, dt);
-      }
-      for (const [dir, codes, key] of [[1, ['ArrowUp', 'KeyW'], 'up'], [-1, ['ArrowDown', 'KeyS'], 'down']]) {
-        if (codes.some((cd) => k.has(cd))) {
-          this.hold[key] += dt;
-          if (this.hold[key] > 0.3) {
-            this.hold[key + 'Acc'] = (this.hold[key + 'Acc'] || 0) + 28 * dt;
-            while (this.hold[key + 'Acc'] >= 1) { this.hold[key + 'Acc'] -= 1; c.angle = TK.clamp(c.angle + dir, 0, 90); }
-          }
-        } else this.hold[key] = 0;
-      }
+    const remote = c.human && !this.isMine(c); // another player's character, on the host
+    if (this.isMine(c)) {
+      const dir = this.localControls(c, dt);
+      if (dir) this.walk(c, dir, dt);
+    } else if (remote) {
+      if (this.remoteMove && !this.charging) this.walk(c, this.remoteMove, dt);
     } else {
       this.stepAI(dt);
     }
-    if (this.charging) {
-      this.power = Math.min(100, this.power + 56 * dt);
-      TK.Sfx.charge(this.power);
-      if (this.power >= 100) this.fire();
+    if (this.charging && !remote) this.chargeStep(dt);
+  }
+
+  tickSound() {
+    const sec = Math.ceil(this.timer);
+    if (sec <= 5 && sec !== this.lastTick && sec > 0) {
+      this.lastTick = sec;
+      if (this.isMine(this.active)) TK.Sfx.play('tick');
+    }
+  }
+
+  chargeStep(dt) {
+    this.power = Math.min(100, this.power + 56 * dt);
+    if (this.isMine(this.active)) TK.Sfx.charge(this.power);
+    if (this.power >= 100) this.fire();
+  }
+
+  // Keyboard/touch: angle repeat while held; returns the walk direction.
+  localControls(c, dt) {
+    if (this.menuOpen) return 0;
+    const k = this.keys;
+    for (const [dir, codes, key] of [[1, ['ArrowUp', 'KeyW'], 'up'], [-1, ['ArrowDown', 'KeyS'], 'down']]) {
+      if (codes.some((cd) => k.has(cd))) {
+        this.hold[key] += dt;
+        if (this.hold[key] > 0.3) {
+          this.hold[key + 'Acc'] = (this.hold[key + 'Acc'] || 0) + 28 * dt;
+          while (this.hold[key + 'Acc'] >= 1) { this.hold[key + 'Acc'] -= 1; c.angle = TK.clamp(Math.round(c.angle) + dir, 0, 90); }
+        }
+      } else this.hold[key] = 0;
+    }
+    if (this.charging) return 0;
+    const left = k.has('ArrowLeft') || k.has('KeyA');
+    const right = k.has('ArrowRight') || k.has('KeyD');
+    return left && !right ? -1 : right && !left ? 1 : 0;
+  }
+
+  // ---------- online: host side ----------
+  sendSnapshot() {
+    const r1 = (v) => Math.round(v * 10) / 10;
+    const msg = {
+      t: 'state',
+      ph: this.phase, a: this.active ? this.active.id : -1, tn: this.turnNo,
+      tm: r1(this.timer || 0), w: this.wind, st: Math.round(this.stamina || 0), en: this.energy || 0,
+      it: this.items || {}, ch: this.charging ? 1 : 0, pw: r1(this.power || 0), sp: r1(this.shotPower || 0),
+      lb: this.lastBoom ? [Math.round(this.lastBoom.x), Math.round(this.lastBoom.y)] : null,
+      c: this.chars.map((c) => [
+        r1(c.x), r1(c.y), c.facing, r1(c.angle), c.hp,
+        (c.alive ? 1 : 0) | (c.gone ? 2 : 0) | (c.grounded ? 4 : 0) | (c.human ? 8 : 0),
+        Math.round(c.rage), Math.round(c.delay), c.mood, c.lastPower == null ? -1 : r1(c.lastPower), r1(c.recoil),
+      ]),
+      p: this.projectiles.map((p) => [p.id, r1(p.x), r1(p.y), r1(p.vx), r1(p.vy), (p.super ? 1 : 0) | (p.teleport ? 2 : 0)]),
+      ev: this.outbox,
+    };
+    this.outbox = [];
+    this.netSend(msg);
+  }
+
+  // An input message from another player, relayed by the server.
+  netInput(from, d) {
+    if (this.role !== 'host' || !d) return;
+    const c = this.active;
+    if (this.state !== 'play' || this.phase !== 'aim' || !c || !c.human || c.pid !== from) return;
+    const num = (v, a, b, def) => (typeof v === 'number' && isFinite(v) ? TK.clamp(v, a, b) : def);
+    switch (d.k) {
+      case 'move':
+        this.remoteMove = d.dir === -1 ? -1 : d.dir === 1 ? 1 : 0;
+        break;
+      case 'aim':
+        c.angle = num(d.a, 0, 90, c.angle);
+        c.facing = d.f === -1 ? -1 : 1;
+        this.charging = !!d.ch;
+        this.power = num(d.pw, 0, 100, 0);
+        break;
+      case 'item':
+        if (typeof d.id === 'string') this.useItem(d.id);
+        break;
+      case 'fire':
+        c.angle = num(d.a, 0, 90, c.angle);
+        c.facing = d.f === -1 ? -1 : 1;
+        this.power = num(d.p, 0, 100, 50);
+        this.remoteMove = 0;
+        this.fire();
+        break;
+      case 'pass':
+        this.passTurn();
+        break;
+    }
+  }
+
+  // A player disconnected: a bot takes over their character.
+  netLeft(pid, name) {
+    for (const c of this.chars) {
+      if (c.pid !== pid || !c.human) continue;
+      c.human = false;
+      if (this.role === 'host') {
+        this.floatText(c.x, c.y - 90, (name || c.name) + ' left (bot plays)', '#ffffff', 16);
+        if (c === this.active && this.phase === 'aim') { this.charging = false; this.startAI(); }
+      }
+    }
+  }
+
+  // ---------- online: client side ----------
+  netState(m) {
+    if (this.role !== 'client' || !m || !Array.isArray(m.c)) return;
+    this.phase = m.ph;
+    this.active = this.chars[m.a] || null;
+    if (m.tn !== this.turnNo) {
+      this.turnNo = m.tn;
+      if (this.active && m.ph === 'aim') this.onTurnStart();
+      this.sentMove = 0;
+    }
+    if (Math.abs((this.timer || 0) - m.tm) > 0.25) this.timer = m.tm;
+    this.wind = m.w;
+    this.stamina = m.st;
+    this.energy = m.en;
+    this.items = m.it || {};
+    this.lastBoom = m.lb ? { x: m.lb[0], y: m.lb[1] } : null;
+    const myAim = this.phase === 'aim' && this.isMine(this.active);
+    if (!myAim) { this.charging = !!m.ch; this.power = m.pw; this.shotPower = m.sp; }
+    m.c.forEach((a, i) => {
+      const c = this.chars[i];
+      if (!c) return;
+      if (c.tx == null || Math.hypot(a[0] - c.x, a[1] - c.y) > 250) { c.x = a[0]; c.y = a[1]; }
+      c.tx = a[0];
+      c.ty = a[1];
+      if (!(myAim && c === this.active)) {
+        c.facing = a[2];
+        c.angle = a[3];
+        if (a[9] >= 0) c.lastPower = a[9];
+      }
+      c.hp = a[4];
+      c.alive = !!(a[5] & 1);
+      c.gone = !!(a[5] & 2);
+      c.grounded = !!(a[5] & 4);
+      c.human = !!(a[5] & 8);
+      c.rage = a[6];
+      c.delay = a[7];
+      c.mood = a[8];
+      if (a[10] > c.recoil) c.recoil = a[10];
+    });
+    const seen = new Set();
+    for (const q of m.p || []) {
+      seen.add(q[0]);
+      let p = this.projectiles.find((x) => x.id === q[0]);
+      if (!p) { p = { id: q[0], t: 0, trailT: 0 }; this.projectiles.push(p); }
+      p.x = q[1]; p.y = q[2]; p.vx = q[3]; p.vy = q[4];
+      p.super = !!(q[5] & 1);
+      p.teleport = !!(q[5] & 2);
+    }
+    this.projectiles = this.projectiles.filter((p) => seen.has(p.id));
+    for (const e of m.ev || []) this.applyEvent(e);
+  }
+
+  // Client: smooth movement between host snapshots + our own aiming.
+  clientStep(dt) {
+    for (const c of this.chars) {
+      if (c.tx != null) {
+        const k = Math.min(1, dt * 14);
+        c.x += (c.tx - c.x) * k;
+        c.y += (c.ty - c.y) * k;
+      }
+      if (c.recoil > 0) c.recoil = Math.max(0, c.recoil - dt * 4);
+    }
+    for (const p of this.projectiles) {
+      p.vx += (this.wind || 0) * TK.WIND_ACC * dt;
+      p.vy += TK.G * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.trailT += dt;
+      if (p.trailT > 0.03) {
+        p.trailT = 0;
+        this.particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 0, max: 0.6, color: p.teleport ? '#c7b5ff' : p.super ? '#ffb0a0' : '#ffffff', size: p.super ? 7 : 5, type: 'trail' });
+      }
+    }
+    if (this.state !== 'play' || this.phase !== 'aim' || !this.active) return;
+    this.timer = Math.max(0, this.timer - dt);
+    this.tickSound();
+    const c = this.active;
+    if (!this.isMine(c) || this.sentFire) return;
+    const dir = this.localControls(c, dt);
+    if (dir) c.facing = dir;
+    if (dir !== (this.sentMove || 0)) {
+      this.sentMove = dir;
+      this.netSend({ t: 'input', d: { k: 'move', dir } });
+    }
+    if (this.charging) this.chargeStep(dt);
+    // stream our aim so everyone sees the cannon and power bar move
+    this.aimT = (this.aimT || 0) + dt;
+    const sig = `${Math.round(c.angle)}|${c.facing}|${this.charging ? 1 : 0}|${Math.round(this.power)}`;
+    if (this.aimT > 0.07 && sig !== this.aimSig && !this.sentFire) {
+      this.aimT = 0;
+      this.aimSig = sig;
+      this.netSend({ t: 'input', d: { k: 'aim', a: Math.round(c.angle), f: c.facing, ch: this.charging ? 1 : 0, pw: Math.round(this.power * 10) / 10 } });
     }
   }
 
@@ -870,7 +1220,7 @@ TK.Game = class Game {
       ctx.restore();
 
       // aim guide for the human whose turn it is
-      if (isActive && c.human) {
+      if (isActive && this.isMine(c)) {
         const m = this.muzzle(c, c.angle);
         ctx.strokeStyle = 'rgba(255,255,255,0.85)';
         ctx.setLineDash([4, 6]);
@@ -1175,7 +1525,7 @@ TK.Game = class Game {
       ctx.globalAlpha = t > 1.2 ? (1.6 - t) / 0.4 : 1;
       ctx.font = font(Math.round(44 * (0.6 + 0.4 * s)), 700);
       ctx.textAlign = 'center';
-      TK.outlineText(ctx, this.banner.text, W / 2, H * 0.3, c && c.human ? '#ffe45c' : '#ffffff', '#2a1208', 8);
+      TK.outlineText(ctx, this.banner.text, W / 2, H * 0.3, this.banner.mine ? '#ffe45c' : '#ffffff', '#2a1208', 8);
       ctx.globalAlpha = 1;
     }
     if (this.state === 'over') {

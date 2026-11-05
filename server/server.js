@@ -18,6 +18,8 @@ const MAX_ROOMS = 500;
 const HATS = ['cap', 'wizard', 'crown', 'bunny', 'helmet', 'sprout'];
 const THEMES = ['random', 'meadow', 'candy', 'snow', 'desert'];
 const DIFFS = ['easy', 'normal', 'hard'];
+const HEROES = ['rookie', 'knight', 'ninja', 'witch', 'brute', 'tinker'];
+const WEAPONS = ['bomb', 'splitter', 'frost', 'toxic', 'thunder', 'drill', 'bouncer', 'medic'];
 const BOT_NAMES = ['Pip', 'Momo', 'Rusty', 'Juno', 'Biscuit', 'Nova', 'Taro', 'Ziggy', 'Mochi', 'Bolt'];
 const BOT_COLORS = ['#ff5a5f', '#3fa7ff', '#ffb627', '#7bd64a', '#b77bff', '#ff7ac8'];
 const BOT_HAIR = ['#5a3418', '#f2c14e', '#2b2b3a', '#d9572b', '#8b5cf6', '#ffffff'];
@@ -72,6 +74,8 @@ function cleanProfile(p) {
     hat: HATS.includes(p.hat) ? p.hat : 'cap',
     color: isColor(p.color) ? p.color : '#3fa7ff',
     hair: isColor(p.hair) ? p.hair : '#5a3418',
+    hero: HEROES.includes(p.hero) ? p.hero : 'rookie',
+    weapon: WEAPONS.includes(p.weapon) ? p.weapon : 'bomb',
   };
 }
 
@@ -107,8 +111,8 @@ function roomInfo(room) {
     started: room.started,
     theme: room.theme,
     difficulty: room.difficulty,
-    players: [...room.players.values()].map((p) => ({ id: p.id, name: p.name, team: p.team, hat: p.hat, color: p.color, hair: p.hair })),
-    bots: room.bots.map((b) => ({ id: b.id, name: b.name, team: b.team, hat: b.hat, color: b.color, hair: b.hair })),
+    players: [...room.players.values()].map((p) => ({ id: p.id, name: p.name, team: p.team, hat: p.hat, color: p.color, hair: p.hair, hero: p.hero, weapon: p.weapon })),
+    bots: room.bots.map((b) => ({ id: b.id, name: b.name, team: b.team, hat: b.hat, color: b.color, hair: b.hair, hero: b.hero, weapon: b.weapon })),
   };
 }
 
@@ -190,7 +194,7 @@ function handle(ws, msg) {
       if (teamCount(room, team) >= MAX_TEAM) return;
       const used = new Set(room.bots.map((b) => b.name));
       const name = 'Bot ' + (BOT_NAMES.find((n) => !used.has('Bot ' + n)) || 'X');
-      room.bots.push({ id: 'b' + ++room.botSeq, name, team, hat: pick(HATS), color: pick(BOT_COLORS), hair: pick(BOT_HAIR) });
+      room.bots.push({ id: 'b' + ++room.botSeq, name, team, hat: pick(HATS), color: pick(BOT_COLORS), hair: pick(BOT_HAIR), hero: pick(HEROES), weapon: pick(WEAPONS) });
       broadcast(room, roomInfo(room));
       return;
     }
@@ -212,8 +216,8 @@ function handle(ws, msg) {
       if (teamCount(room, 0) === 0 || teamCount(room, 1) === 0) return send(ws, { t: 'error', text: 'Both teams need at least one player or bot.' });
       room.started = true;
       const roster = [
-        ...[...room.players.values()].map((p) => ({ pid: p.id, name: p.name, team: p.team, hat: p.hat, color: p.color, hair: p.hair, bot: false })),
-        ...room.bots.map((b) => ({ pid: null, name: b.name, team: b.team, hat: b.hat, color: b.color, hair: b.hair, bot: true })),
+        ...[...room.players.values()].map((p) => ({ pid: p.id, name: p.name, team: p.team, hat: p.hat, color: p.color, hair: p.hair, hero: p.hero, weapon: p.weapon, bot: false })),
+        ...room.bots.map((b) => ({ pid: null, name: b.name, team: b.team, hat: b.hat, color: b.color, hair: b.hair, hero: b.hero, weapon: b.weapon, bot: true })),
       ];
       broadcast(room, { t: 'start', host: room.host, seed: Math.floor(Math.random() * 1e9), theme: room.theme, difficulty: room.difficulty, roster });
       broadcast(room, roomInfo(room));

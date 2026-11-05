@@ -20,6 +20,8 @@
     mode: saved.mode || '1v1',
     difficulty: saved.difficulty || 'normal',
     theme: saved.theme || 'random',
+    hero: TK.HEROES[saved.hero] ? saved.hero : 'rookie',
+    weapon: TK.WEAPONS[saved.weapon] ? saved.weapon : 'bomb',
   };
   if (saved.name) $('name').value = saved.name;
 
@@ -56,6 +58,70 @@
     }
   }
 
+  // ---------- tabs + hero/weapon cards ----------
+  document.querySelectorAll('.tab').forEach((t) => {
+    t.onclick = () => {
+      document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('on', x === t));
+      document.querySelectorAll('.tabpane').forEach((p) => p.classList.toggle('hidden', p.dataset.pane !== t.dataset.tab));
+    };
+  });
+
+  const pips = (n) => '<span class="pips">' + [1, 2, 3, 4, 5].map((i) => `<i class="${i <= n ? 'on' : ''}"></i>`).join('') + '</span>';
+  function miniCanvas(draw) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const g = c.getContext('2d');
+    draw(g);
+    return c;
+  }
+  function pickCards(el, ids, key, render) {
+    el.innerHTML = '';
+    for (const id of ids) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'pick' + (sel[key] === id ? ' on' : '');
+      b.dataset.v = id;
+      render(b, id);
+      b.onclick = () => {
+        sel[key] = id;
+        el.querySelectorAll('.pick').forEach((x) => x.classList.toggle('on', x === b));
+        updateLoadout();
+      };
+      el.appendChild(b);
+    }
+  }
+  pickCards($('heroes'), TK.HERO_IDS, 'hero', (b, id) => {
+    const h = TK.HEROES[id];
+    const r = TK.heroRatings(h);
+    b.appendChild(miniCanvas((g) => {
+      g.setTransform(2.2, 0, 0, 2.2, 60, 118);
+      TK.Art.drawChibi(g, { color: sel.color, hair: sel.hair, hat: 'none', hero: id, weapon: 'bomb', angle: 20, time: 0.5, mood: 'normal' });
+    }));
+    b.insertAdjacentHTML('beforeend', `
+      <div class="t">${h.name}<small>${h.title}</small></div>
+      <div class="stats">${Object.entries(r).map(([k, v]) => `<span>${k}</span>${pips(v)}`).join('')}</div>
+      <div class="d"><b>Perk:</b> ${h.perk}</div>`);
+  });
+  pickCards($('weapons'), TK.WEAPON_IDS, 'weapon', (b, id) => {
+    const w = TK.WEAPONS[id];
+    b.appendChild(miniCanvas((g) => {
+      g.setTransform(2.6, 0, 0, 2.6, 30, 74);
+      g.rotate(-0.35);
+      TK.Art.drawWeapon(g, id, sel.color, 0, 0.3);
+    }));
+    const dmg = TK.clamp(Math.round(w.dmg / 70), 1, 5);
+    const blast = TK.clamp(Math.round((w.radius - 22) / 7), 1, 5);
+    b.insertAdjacentHTML('beforeend', `
+      <div class="t">${w.name}</div>
+      <div class="stats"><span>DMG</span>${pips(dmg)}<span>BLAST</span>${pips(blast)}</div>
+      <div class="d">${w.desc}<br><b>Super · ${w.superName}:</b> ${w.superDesc}</div>`);
+  });
+  function updateLoadout() {
+    const h = TK.HEROES[sel.hero], w = TK.WEAPONS[sel.weapon];
+    $('loadout').innerHTML = `<b>${h.name}</b> the ${h.title}<br>with the <b>${w.name}</b>`;
+  }
+  updateLoadout();
+
   const MAPS = [['random', 'Random'], ...Object.entries(TK.THEMES).map(([k, t]) => [k, t.name])];
   const DIFFS = [['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']];
 
@@ -90,7 +156,7 @@
     pctx.setTransform(1, 0, 0, 1, 0, 0);
     pctx.clearRect(0, 0, pv.width, pv.height);
     pctx.setTransform(2.4, 0, 0, 2.4, 92, 162);
-    TK.Art.drawChibi(pctx, { color: sel.color, hair: sel.hair, hat: sel.hat, angle: 30 + Math.sin(pt * 1.3) * 15, time: pt, mood: 'normal' });
+    TK.Art.drawChibi(pctx, { color: sel.color, hair: sel.hair, hat: sel.hat, hero: sel.hero, weapon: sel.weapon, angle: 30 + Math.sin(pt * 1.3) * 15, time: pt, mood: 'normal' });
     if (!$('menu').classList.contains('hidden')) requestAnimationFrame(drawPreview);
     else previewOn = false;
   }
@@ -99,7 +165,7 @@
 
   const profile = () => {
     const name = ($('name').value || 'Player').trim().slice(0, 12) || 'Player';
-    const p = { name, hat: sel.hat, color: sel.color, hair: sel.hair };
+    const p = { name, hat: sel.hat, color: sel.color, hair: sel.hair, hero: sel.hero, weapon: sel.weapon };
     save({ ...p, mode: sel.mode, difficulty: sel.difficulty, theme: sel.theme });
     return p;
   };
@@ -122,6 +188,7 @@
       player2: {
         name: ($('name2').value || 'Player 2').trim().slice(0, 12) || 'Player 2',
         hat: TK.pick(TK.HATS.filter((h) => h !== sel.hat)), color: TK.pick(p2color), hair: TK.pick(TK.HAIR),
+        hero: TK.pick(TK.HERO_IDS), weapon: TK.pick(TK.WEAPON_IDS),
       },
     });
   };
@@ -231,6 +298,11 @@
   chipGroup($('lobbyDiffs'), DIFFS, 'normal', (v) => net && net.send({ t: 'settings', difficulty: v }));
   $('startOnline').onclick = () => net && net.send({ t: 'start' });
 
+  const loadoutText = (p) => {
+    const h = TK.HEROES[p.hero], w = TK.WEAPONS[p.weapon];
+    return h && w ? `${h.title} · ${w.name}` : '';
+  };
+
   function renderLobby() {
     if (!room) return;
     const isHost = room.host === myId;
@@ -240,11 +312,11 @@
       const items = [
         ...room.players.filter((p) => p.team === team).map((p) => `
           <li><span class="dot" style="background:${escapeHtml(p.color)}"></span>
-          <span class="nm">${escapeHtml(p.name)}</span>
+          <span class="nm">${escapeHtml(p.name)} <span class="sub">${loadoutText(p)}</span></span>
           ${p.id === room.host ? '<span class="tag">host</span>' : ''}${p.id === myId ? '<span class="tag">you</span>' : ''}</li>`),
         ...room.bots.filter((b) => b.team === team).map((b) => `
           <li><span class="dot" style="background:${escapeHtml(b.color)}"></span>
-          <span class="nm">${escapeHtml(b.name)}</span><span class="tag">bot</span>
+          <span class="nm">${escapeHtml(b.name)} <span class="sub">${loadoutText(b)}</span></span><span class="tag">bot</span>
           ${isHost && !room.started ? `<button class="x" data-bot="${escapeHtml(b.id)}" title="Remove bot">✕</button>` : ''}</li>`),
       ];
       ul.innerHTML = items.join('') || '<li class="sys" style="opacity:.6">Empty</li>';

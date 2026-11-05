@@ -21,25 +21,43 @@
       <div class="menu-grid">
         <div class="col preview-col">
           <canvas id="preview" width="200" height="200"></canvas>
+          <div id="loadout" class="loadout"></div>
           <label class="field">
             <span>Your name</span>
             <input id="name" maxlength="12" value="Player" autocomplete="off">
           </label>
-          <div class="field">
-            <span>Hat</span>
-            <div id="hats" class="chips"></div>
-          </div>
-          <div class="field">
-            <span>Color</span>
-            <div id="colors" class="swatches"></div>
-          </div>
-          <div class="field">
-            <span>Hair</span>
-            <div id="hairs" class="swatches"></div>
-          </div>
         </div>
 
         <div class="col">
+          <div class="tabs" role="tablist">
+            <button type="button" class="tab on" data-tab="play">Play</button>
+            <button type="button" class="tab" data-tab="hero">Hero</button>
+            <button type="button" class="tab" data-tab="weapon">Weapon</button>
+            <button type="button" class="tab" data-tab="look">Look</button>
+          </div>
+
+          <div class="tabpane hidden" data-pane="hero">
+            <div id="heroes" class="cards"></div>
+          </div>
+          <div class="tabpane hidden" data-pane="weapon">
+            <div id="weapons" class="cards"></div>
+          </div>
+          <div class="tabpane hidden" data-pane="look">
+            <div class="field">
+              <span>Hat</span>
+              <div id="hats" class="chips"></div>
+            </div>
+            <div class="field">
+              <span>Outfit color</span>
+              <div id="colors" class="swatches"></div>
+            </div>
+            <div class="field">
+              <span>Hair</span>
+              <div id="hairs" class="swatches"></div>
+            </div>
+          </div>
+
+          <div class="tabpane" data-pane="play">
           <div class="field">
             <span>Mode</span>
             <div id="modes" class="chips">
@@ -90,9 +108,11 @@
               <li><b>1–6</b> items cost ENERGY and add delay. Rage fills when you take or deal damage: when full, use the <b>Super Shot</b>.</li>
               <li>Turn order is by <b>delay</b>: walking a lot and using items makes your next turn come later.</li>
               <li>Knock enemies off the islands, or blast their HP to zero. Drag the screen to look around.</li>
+              <li>Pick a <b>Hero</b> (stats + perk) and a <b>Weapon</b> (each has its own shot and its own Super). Any hero can use any weapon.</li>
               <li><b>Online:</b> create a room, send the 4-letter code to friends, pick teams, add bots if you like. Press <b>Enter</b> to chat in game.</li>
             </ul>
           </details>
+          </div>
         </div>
       </div>
     </div>
@@ -162,6 +182,7 @@
 
   <script src="js/util.js"></script>
   <script src="js/audio.js"></script>
+  <script src="js/content.js"></script>
   <script src="js/terrain.js"></script>
   <script src="js/art.js"></script>
   <script src="js/game.js"></script>

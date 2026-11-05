@@ -19,7 +19,7 @@ TK.STAMINA_PER_PX = 0.5; // 100 stamina = 200px of walking per turn
 // Advance one projectile by one fixed step. Shared by the real game and the bot's
 // shot simulation so a bot with zero aim error lands exactly where it predicted.
 TK.stepShot = (p, wind, terrain, chars, dt) => {
-  p.vx += wind * TK.WIND_ACC * dt;
+  p.vx += wind * (p.wm == null ? 1 : p.wm) * TK.WIND_ACC * dt;
   p.vy += TK.G * dt;
   const nx = p.x + p.vx * dt, ny = p.y + p.vy * dt;
   const n = Math.max(1, Math.ceil(Math.hypot(nx - p.x, ny - p.y) / 3));
@@ -27,7 +27,7 @@ TK.stepShot = (p, wind, terrain, chars, dt) => {
     const sx = p.x + ((nx - p.x) * i) / n;
     const sy = p.y + ((ny - p.y) * i) / n;
     if (sx < -400 || sx > terrain.w + 400 || sy > terrain.h + 150) return { out: true, x: sx, y: sy };
-    if (terrain.isSolid(sx, sy)) return { x: sx, y: sy, hit: null };
+    if (!p.ghost && terrain.isSolid(sx, sy)) return { x: sx, y: sy, hit: null };
     for (const c of chars) {
       if (!c.alive) continue;
       if (c === p.owner && p.t < 0.35) continue;
@@ -42,6 +42,37 @@ TK.stepShot = (p, wind, terrain, chars, dt) => {
   return null;
 };
 
+// Bounce a projectile off the terrain at its last free position. Uses the
+// local solid-pixel gradient as the surface normal.
+TK.bounceShot = (p, res, terrain) => {
+  let nx = 0, ny = 0;
+  for (let dy = -6; dy <= 6; dy += 2) {
+    for (let dx = -6; dx <= 6; dx += 2) {
+      if (terrain.isSolid(res.x + dx, res.y + dy)) { nx -= dx; ny -= dy; }
+    }
+  }
+  const len = Math.hypot(nx, ny) || 1;
+  nx /= len; ny /= len;
+  if (nx === 0 && ny === 0) ny = -1;
+  const dot = p.vx * nx + p.vy * ny;
+  p.vx = (p.vx - 2 * dot * nx) * 0.62;
+  p.vy = (p.vy - 2 * dot * ny) * 0.62;
+  // p.x/p.y is still the last free position; nudge out along the normal
+  p.x += nx * 2;
+  p.y += ny * 2;
+};
+
+// Run a shot to its final resting point (with bounces), for bot aiming.
+TK.simulateShot = (p, wind, terrain, chars) => {
+  for (let i = 0; i < 2400; i++) {
+    const r = TK.stepShot(p, wind, terrain, chars, TK.DT);
+    if (!r) continue;
+    if (!r.out && !r.hit && p.bounces > 0) { p.bounces--; TK.bounceShot(p, r, terrain); continue; }
+    return r;
+  }
+  return { out: true, x: p.x, y: p.y };
+};
+
 TK.Game = class Game {
   constructor(canvas) {
     this.canvas = canvas;
@@ -54,6 +85,7 @@ TK.Game = class Game {
     this.particles = [];
     this.texts = [];
     this.rings = [];
+    this.bolts = [];
     this.projectiles = [];
     this.chars = [];
     this.cam = { x: 0, y: 0, shake: 0, free: false };
@@ -151,6 +183,7 @@ TK.Game = class Game {
     this.particles = [];
     this.texts = [];
     this.rings = [];
+    this.bolts = [];
     this.projectiles = [];
     this.miniDirty = true;
 
@@ -159,6 +192,7 @@ TK.Game = class Game {
     const bot = (team) => ({
       name: 'Bot ' + botNames.pop(), team, human: false,
       color: TK.pick(TK.COLORS), hair: TK.pick(TK.HAIR), hat: TK.pick(TK.HATS),
+      hero: TK.pick(TK.HERO_IDS), weapon: TK.pick(TK.WEAPON_IDS),
     });
     let roster;
     if (cfg.roster) {
@@ -179,12 +213,15 @@ TK.Game = class Game {
     const order = this.spawnOrder(roster, TK.mulberry32(seed + 13));
     this.chars = roster.map((r, i) => {
       const s = spots[order[i]];
+      const hero = TK.HEROES[r.hero] ? r.hero : 'rookie';
+      const weapon = TK.WEAPONS[r.weapon] ? r.weapon : 'bomb';
+      const hp = TK.HEROES[hero].hp;
       return {
         id: i, pid: r.pid == null ? null : r.pid, name: r.name || 'Player', team: r.team, human: r.human,
-        color: r.color, hair: r.hair, hat: r.hat,
+        color: r.color, hair: r.hair, hat: r.hat, hero, weapon,
         x: s.x, y: s.y, vy: 0, grounded: false,
         facing: s.x < TK.WORLD_W / 2 ? 1 : -1, angle: 45,
-        hp: 1400, maxHp: 1400, alive: true, gone: false,
+        hp, maxHp: hp, alive: true, gone: false, frozen: false, poison: 0, poisonDmg: 0, poisonSrc: null,
         delay: Math.random() * 20, rage: 0, lastPower: null,
         mood: 'normal', moodT: 0, recoil: 0,
         stats: { dmg: 0, hits: 0, taken: 0 },
@@ -255,6 +292,7 @@ TK.Game = class Game {
       c.setPointerCapture(e.pointerId);
     });
     c.addEventListener('pointermove', (e) => {
+      this.mouse = { x: e.clientX, y: e.clientY };
       if (drag && drag.id === e.pointerId) {
         const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
         if (Math.abs(dx) + Math.abs(dy) > 2) this.cam.free = true;
@@ -361,7 +399,7 @@ TK.Game = class Game {
       this.sfx('heal');
     } else {
       if (id === 'super') c.rage = 0;
-      this.floatText(c.x, c.y - 74, it.name + '!', '#ffe45c', 18);
+      this.floatText(c.x, c.y - 74, (id === 'super' ? TK.weaponOf(c).superName : it.name) + '!', '#ffe45c', 18);
       this.sfx('item');
     }
     return true;
@@ -375,13 +413,34 @@ TK.Game = class Game {
     // keep delays small
     const base = c.delay;
     for (const ch of this.chars) ch.delay -= base;
+    // status effects resolve at the start of the victim's turn
+    if (c.poison > 0) {
+      c.poison--;
+      this.floatText(c.x, c.y - 100, 'Poison', '#8cff5a', 16);
+      this.burst(c.x, c.y - 25, ['#8cff5a', '#4fbf2a'], 10, 90, 'smoke');
+      this.damage(c, c.poisonDmg, c.poisonSrc, false, true);
+      if (!c.alive) { this.lastBoom = { x: c.x, y: c.y }; this.phase = 'between'; this.phaseT = 1.0; this.checkWin(); return; }
+    }
+    if (c.frozen) {
+      c.frozen = false;
+      c.freezeImmune = true;
+      c.delay += 100 / TK.heroOf(c).agi;
+      this.floatText(c.x, c.y - 90, 'Frozen! Turn skipped', '#bfe9ff', 18);
+      this.burst(c.x, c.y - 30, ['#ffffff', '#bfe9ff', '#6fd3ff'], 18, 180, 'debris');
+      this.sfx('freeze');
+      this.lastBoom = { x: c.x, y: c.y - 40 };
+      this.phase = 'between';
+      this.phaseT = 1.1;
+      return;
+    }
+    const hero = TK.heroOf(c);
     this.active = c;
     this.turnNo++;
     const calm = Math.random() < 0.15;
     this.wind = calm ? 0 : Math.round(TK.rand(-5, 5) * 10) / 10;
     this.timer = TK.TURN_TIME;
-    this.stamina = 100;
-    this.energy = 100;
+    this.stamina = Math.round(100 * hero.agi);
+    this.energy = hero.energy || 100;
     this.items = {};
     this.moved = 0;
     this.charging = false;
@@ -417,10 +476,12 @@ TK.Game = class Game {
     this.charging = false;
     const c = this.active;
     if (c) {
-      let add = 100 + this.moved * 0.15;
+      let add = 100 + this.moved * 0.15 + (this.firedWeapon ? TK.weaponOf(c).delay : 0);
       for (const it of TK.ITEMS) if (this.items[it.id]) add += it.delay;
-      c.delay += add;
+      c.delay += add / TK.heroOf(c).agi;
+      c.freezeImmune = false;
     }
+    this.firedWeapon = false;
     this.phase = 'between';
     this.phaseT = 0.6;
     this.checkWin();
@@ -492,27 +553,37 @@ TK.Game = class Game {
   makeShot(c, angleDeg, power) {
     const m = this.muzzle(c, angleDeg);
     const v = power * TK.POWER_K;
-    return { x: m.x, y: m.y, vx: m.dx * v, vy: m.dy * v, owner: c, t: 0 };
+    const w = TK.weaponOf(c);
+    return {
+      x: m.x, y: m.y, vx: m.dx * v, vy: m.dy * v, owner: c, t: 0,
+      weapon: c.weapon || 'bomb', wm: w.wind == null ? 1 : w.wind, bounces: w.bounce || 0,
+    };
   }
 
   launchVolley() {
     const c = this.active;
+    const w = TK.weaponOf(c);
     const offs = this.items.triple ? [-4, 0, 4] : [0];
     let mult = 1;
     if (this.items.triple) mult *= 0.6;
     if (this.items.double) mult *= 0.75;
     if (this.items.power) mult *= 1.5;
-    if (this.items.super) mult *= 2;
+    const sup = !!this.items.super;
     for (const o of offs) {
       const p = this.makeShot(c, TK.clamp(c.angle + o, -10, 100), this.shotPower);
       p.mult = mult;
-      p.super = !!this.items.super;
+      p.super = sup;
       p.teleport = !!this.items.teleport;
+      if (p.teleport) { p.weapon = 'bomb'; p.bounces = 0; p.wm = 1; }
+      if (sup && w.bounce) p.bounces = 3;
+      p.split = !p.teleport && w.split ? (sup ? 6 : w.split) : 0;
+      p.drillLeft = !p.teleport && w.drill ? w.drill * (sup ? 2 : 1) : 0;
       p.trailT = 0;
       p.id = ++this.projSeq;
       this.projectiles.push(p);
     }
     this.volleys--;
+    this.firedWeapon = true;
     c.recoil = 1;
     const m = this.muzzle(c, c.angle);
     this.burst(m.x, m.y, ['#fff3b0', '#ffb347', '#ffffff'], 8, 140, 'spark');
@@ -536,45 +607,115 @@ TK.Game = class Game {
       return;
     }
     if (res.out) return;
-    const R = TK.BLAST_R * (p.super ? 1.55 : 1);
-    this.carve(res.x, res.y, R);
+    const id = p.weapon || 'bomb';
+    const w = TK.WEAPONS[id] || TK.WEAPONS.bomb;
+    const sup = p.super && !p.mini;
+    const ownerHero = TK.heroOf(owner);
+    let R = w.radius;
+    let base = w.dmg;
+    if (sup) {
+      if (id === 'bomb') { R *= 1.55; base *= 2; }
+      else if (id === 'frost') { R *= 1.6; base *= 1.5; }
+      else if (id === 'toxic') { R *= 1.4; }
+      else if (id === 'thunder') { base *= 1.3; }
+      else if (id === 'drill') { R *= 1.2; base *= 1.8; }
+      else if (id === 'medic') { R *= 1.3; base *= 1.5; }
+    }
+    if (id === 'thunder') this.bolt(res.x + TK.rand(-60, 60), res.y - 700, res.x, res.y);
+    this.carve(res.x, res.y, R * (w.crater || 1));
     const reach = R + TK.BODY_R;
+    const hitSet = new Set();
     for (const c of this.chars) {
       if (!c.alive) continue;
       const d = TK.dist(res.x, res.y, c.x, c.y - TK.BODY_OFFSET);
       if (d > reach) continue;
+      hitSet.add(c);
       const f = 1 - 0.65 * (d / reach);
-      let dmg = Math.round(TK.BASE_DMG * p.mult * f * TK.rand(0.94, 1.06));
+      let dmg = base * p.mult * ownerHero.atk * f * TK.rand(0.94, 1.06);
       const crit = res.hit === c;
-      if (crit) dmg = Math.round(dmg * 1.2);
-      this.damage(c, dmg, owner, crit);
+      if (crit) dmg *= 1.2;
+      if (w.heal && c.team === owner.team) { this.heal(c, Math.round(dmg * 0.5)); continue; }
+      const lucky = Math.random() < ownerHero.luck;
+      if (lucky) dmg *= 1.5;
+      this.damage(c, Math.round(dmg), owner, crit, false, lucky);
+      if (c.alive && w.freeze) {
+        // no freeze-lock: someone who just thawed gets to act before they can be frozen again
+        if (c.freezeImmune) this.floatText(c.x, c.y - 112, 'Freeze immune', '#bfe9ff', 16);
+        else { c.frozen = true; this.floatText(c.x, c.y - 112, 'Frozen!', '#bfe9ff', 20); }
+      }
+      if (c.alive && w.poison) {
+        c.poison = w.poisonTurns;
+        c.poisonDmg = Math.round(w.poison * (sup ? 2 : 1) * ownerHero.atk);
+        c.poisonSrc = owner;
+      }
       c.vy = Math.min(c.vy, -140);
       c.grounded = false;
     }
-    // effects
-    const t = this.terrain.theme;
-    this.burst(res.x, res.y, ['#fff3b0', '#ffd23f', '#ff8a3c', '#ff5a3c'], p.super ? 34 : 22, p.super ? 320 : 240, 'fire');
-    this.burst(res.x, res.y, ['#7d6d63', '#9a8c82', '#5e524b'], 12, 80, 'smoke');
-    this.burst(res.x, res.y, [t.dirt, t.top, t.rim], 18, 300, 'debris');
-    this.ring(res.x, res.y, 8, R * 1.4, 0.35, '#fff7c0');
-    this.shake(p.super ? 16 : 9);
-    this.sfx(p.super ? 'bigboom' : 'boom');
+    if (sup && id === 'thunder') {
+      // lightning jumps to up to 2 more enemies
+      let from = { x: res.x, y: res.y };
+      const targets = this.chars
+        .filter((c) => c.alive && c.team !== owner.team && !hitSet.has(c))
+        .sort((a, b) => TK.dist(res.x, res.y, a.x, a.y) - TK.dist(res.x, res.y, b.x, b.y))
+        .slice(0, 2);
+      for (const c of targets) {
+        if (TK.dist(from.x, from.y, c.x, c.y) > 700) break;
+        this.bolt(from.x, from.y, c.x, c.y - TK.BODY_OFFSET);
+        this.damage(c, Math.round(base * 0.6 * p.mult * ownerHero.atk), owner, false);
+        from = { x: c.x, y: c.y - TK.BODY_OFFSET };
+      }
+    }
+    if (sup && id === 'medic') {
+      for (const c of this.chars) if (c.alive && c.team === owner.team) this.heal(c, Math.round(c.maxHp * 0.25));
+    }
+    this.boomFx(res.x, res.y, R, id, sup);
   }
 
-  damage(c, dmg, src, crit) {
+  boomFx(x, y, R, id, sup) {
+    const t = this.terrain.theme;
+    const pal = {
+      frost: ['#ffffff', '#bfe9ff', '#6fd3ff', '#9fe3ff'],
+      toxic: ['#d9ffb3', '#8cff5a', '#4fbf2a', '#2e7a2a'],
+      thunder: ['#ffffff', '#fff7a0', '#ffe45c', '#9fe3ff'],
+      medic: ['#ffffff', '#ffd0dc', '#ff8fa8', '#7dff9a'],
+    }[id] || ['#fff3b0', '#ffd23f', '#ff8a3c', '#ff5a3c'];
+    const big = sup || R > 60;
+    this.burst(x, y, pal, big ? 34 : 22, big ? 320 : 240, 'fire');
+    this.burst(x, y, id === 'toxic' ? ['#6fbf4a', '#8cff5a', '#3d7a2a'] : ['#7d6d63', '#9a8c82', '#5e524b'], id === 'toxic' ? 22 : 12, 80, 'smoke');
+    this.burst(x, y, [t.dirt, t.top, t.rim], 18, 300, 'debris');
+    this.ring(x, y, 8, R * 1.4, 0.35, id === 'frost' ? '#bfe9ff' : id === 'toxic' ? '#b6ff8a' : '#fff7c0');
+    this.shake(big ? 16 : 9);
+    const snd = { frost: 'freeze', toxic: 'poison', thunder: 'zap' }[id];
+    this.sfx(snd || (big ? 'bigboom' : 'boom'));
+    if (snd && id !== 'thunder') this.sfx('boom');
+  }
+
+  heal(c, amt) {
+    amt = Math.min(c.maxHp - c.hp, Math.max(0, amt));
+    if (amt <= 0 || !c.alive) return;
+    c.hp += amt;
+    this.floatText(c.x + TK.rand(-8, 8), c.y - 70, '+' + amt, '#5dff7a', 26);
+    this.burst(c.x, c.y - 25, ['#7dff9a', '#ffffff'], 10, 100, 'spark');
+  }
+
+  damage(c, dmg, src, crit, poison, lucky) {
+    const vh = TK.heroOf(c);
+    dmg = Math.max(1, Math.round(dmg * vh.def));
     c.hp = Math.max(0, c.hp - dmg);
     c.mood = 'hurt';
     c.moodT = 1.0;
     c.stats.taken += dmg;
-    c.rage = Math.min(100, c.rage + dmg / 8);
+    c.rage = Math.min(100, c.rage + (dmg / 8) * (vh.rage || 1));
     if (src && src !== c) {
       src.stats.dmg += dmg;
-      src.stats.hits++;
-      src.rage = Math.min(100, src.rage + dmg / 16);
+      if (!poison) src.stats.hits++;
+      src.rage = Math.min(100, src.rage + (dmg / 16) * (TK.heroOf(src).rage || 1));
       if (src.team !== c.team) { src.mood = 'happy'; src.moodT = 1.2; }
     }
-    this.floatText(c.x + TK.rand(-8, 8), c.y - 62, '-' + dmg, crit ? '#ffdd33' : '#ff4a4a', crit ? 34 : 28);
+    const col = poison ? '#8cff5a' : lucky ? '#d9a8ff' : crit ? '#ffdd33' : '#ff4a4a';
+    this.floatText(c.x + TK.rand(-8, 8), c.y - 62, '-' + dmg, col, crit || lucky ? 34 : 28);
     if (crit) this.floatText(c.x, c.y - 92, 'CRITICAL!', '#ffdd33', 18);
+    else if (lucky) this.floatText(c.x, c.y - 92, 'LUCKY!', '#d9a8ff', 18);
     this.sfx('hit');
     if (c.hp <= 0) this.kill(c, 'KO!');
   }
@@ -583,6 +724,8 @@ TK.Game = class Game {
     if (!c.alive) return;
     c.alive = false;
     c.hp = 0;
+    c.frozen = false;
+    c.poison = 0;
     this.floatText(c.x, c.y - 90, msg, '#ffffff', 26);
     this.burst(c.x, c.y - 20, ['#ffffff', '#dddddd'], 20, 160, 'smoke');
   }
@@ -645,6 +788,7 @@ TK.Game = class Game {
       case 'b': this.burst(e[1], e[2], e[3], e[4], e[5], e[6]); break;
       case 't': this.floatText(e[1], e[2], e[3], e[4], e[5]); break;
       case 'o': this.netGameOver(e[1], e[2]); break;
+      case 'z': this.bolt(e[1], e[2], e[3], e[4]); break;
     }
   }
 
@@ -693,6 +837,8 @@ TK.Game = class Game {
     this.texts = this.texts.filter((t) => t.t < 1.4);
     for (const r of this.rings) r.t += dt;
     this.rings = this.rings.filter((r) => r.t < r.life);
+    for (const b of this.bolts) b.t += dt;
+    this.bolts = this.bolts.filter((b) => b.t < b.life);
     if (this.banner) this.banner.t += dt;
 
     if (this.state !== 'play' && this.state !== 'over') return;
@@ -844,10 +990,11 @@ TK.Game = class Game {
       lb: this.lastBoom ? [Math.round(this.lastBoom.x), Math.round(this.lastBoom.y)] : null,
       c: this.chars.map((c) => [
         r1(c.x), r1(c.y), c.facing, r1(c.angle), c.hp,
-        (c.alive ? 1 : 0) | (c.gone ? 2 : 0) | (c.grounded ? 4 : 0) | (c.human ? 8 : 0),
-        Math.round(c.rage), Math.round(c.delay), c.mood, c.lastPower == null ? -1 : r1(c.lastPower), r1(c.recoil),
+        (c.alive ? 1 : 0) | (c.gone ? 2 : 0) | (c.grounded ? 4 : 0) | (c.human ? 8 : 0) | (c.frozen ? 16 : 0),
+        Math.round(c.rage), Math.round(c.delay), c.mood, c.lastPower == null ? -1 : r1(c.lastPower), r1(c.recoil), c.poison || 0,
       ]),
-      p: this.projectiles.map((p) => [p.id, r1(p.x), r1(p.y), r1(p.vx), r1(p.vy), (p.super ? 1 : 0) | (p.teleport ? 2 : 0)]),
+      p: this.projectiles.map((p) => [p.id, r1(p.x), r1(p.y), r1(p.vx), r1(p.vy),
+        (p.super ? 1 : 0) | (p.teleport ? 2 : 0) | (p.mini ? 4 : 0) | (p.ghost ? 8 : 0) | (Math.max(0, TK.WEAPON_IDS.indexOf(p.weapon)) << 4), p.wm == null ? 1 : p.wm]),
       ev: this.outbox,
     };
     this.outbox = [];
@@ -932,6 +1079,8 @@ TK.Game = class Game {
       c.gone = !!(a[5] & 2);
       c.grounded = !!(a[5] & 4);
       c.human = !!(a[5] & 8);
+      c.frozen = !!(a[5] & 16);
+      c.poison = a[11] || 0;
       c.rage = a[6];
       c.delay = a[7];
       c.mood = a[8];
@@ -945,6 +1094,10 @@ TK.Game = class Game {
       p.x = q[1]; p.y = q[2]; p.vx = q[3]; p.vy = q[4];
       p.super = !!(q[5] & 1);
       p.teleport = !!(q[5] & 2);
+      p.mini = !!(q[5] & 4);
+      p.ghost = !!(q[5] & 8);
+      p.weapon = TK.WEAPON_IDS[q[5] >> 4] || 'bomb';
+      p.wm = q[6] == null ? 1 : q[6];
     }
     this.projectiles = this.projectiles.filter((p) => seen.has(p.id));
     for (const e of m.ev || []) this.applyEvent(e);
@@ -961,7 +1114,7 @@ TK.Game = class Game {
       if (c.recoil > 0) c.recoil = Math.max(0, c.recoil - dt * 4);
     }
     for (const p of this.projectiles) {
-      p.vx += (this.wind || 0) * TK.WIND_ACC * dt;
+      p.vx += (this.wind || 0) * (p.wm == null ? 1 : p.wm) * TK.WIND_ACC * dt;
       p.vy += TK.G * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
@@ -994,17 +1147,57 @@ TK.Game = class Game {
   }
 
   stepFlying(dt) {
+    const spawned = [];
     for (const p of this.projectiles) {
       if (p.dead) continue;
-      const res = TK.stepShot(p, this.wind, this.terrain, this.chars, dt);
+      let res = TK.stepShot(p, this.wind, this.terrain, this.chars, dt);
       p.trailT += dt;
       if (p.trailT > 0.03) {
         p.trailT = 0;
-        this.particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 0, max: 0.6, color: p.teleport ? '#c7b5ff' : p.super ? '#ffb0a0' : '#ffffff', size: p.super ? 7 : 5, type: 'trail' });
+        const col = p.teleport ? '#c7b5ff' : p.super ? '#ffb0a0' : { frost: '#dff4ff', toxic: '#b6ff8a', thunder: '#fff7a0', medic: '#ffd0dc' }[p.weapon] || '#ffffff';
+        this.particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 0, max: 0.6, color: col, size: p.super ? 7 : p.mini ? 3.5 : 5, type: 'trail' });
+      }
+      // Splitter: burst into bomblets once it starts falling
+      if (!res && p.split && p.vy > 0) {
+        p.dead = true;
+        const n = p.split;
+        for (let i = 0; i < n; i++) {
+          const off = (i - (n - 1) / 2) * (n > 3 ? 38 : 50);
+          spawned.push({
+            x: p.x, y: p.y, vx: p.vx + off, vy: p.vy - Math.abs(off) * 0.2, owner: p.owner, t: 1, weapon: 'splitter',
+            wm: 1, bounces: 0, mult: p.mult, mini: true, super: false, trailT: 0, id: ++this.projSeq,
+          });
+        }
+        this.burst(p.x, p.y, ['#ffe45c', '#ff9f43', '#ffffff'], 14, 160, 'spark');
+        this.sfx('split');
+        continue;
+      }
+      // Drill: tunnel through the ground, then blow up
+      if (p.ghost) {
+        const d = Math.hypot(p.vx, p.vy) * dt;
+        p.vx *= 0.985; p.vy *= 0.985;
+        p.drillLeft -= d;
+        p.carveAcc = (p.carveAcc || 0) + d;
+        if (p.carveAcc >= 9) { p.carveAcc = 0; this.carve(p.x, p.y, 11); }
+        if (!res && p.drillLeft <= 0) res = { x: p.x, y: p.y, hit: null };
+      } else if (res && !res.out && !res.hit && p.drillLeft > 0) {
+        p.ghost = true;
+        this.sfx('drill');
+        this.burst(res.x, res.y, [this.terrain.theme.dirt, this.terrain.theme.top], 10, 160, 'debris');
+        continue;
+      }
+      // Bouncer: rebound off terrain (Pinball super explodes on every bounce)
+      if (res && !res.out && !res.hit && p.bounces > 0) {
+        if (p.super) this.explode(p, res);
+        p.bounces--;
+        TK.bounceShot(p, res, this.terrain);
+        this.sfx('bounce');
+        this.burst(res.x, res.y, ['#ff7ac8', '#ffffff'], 8, 120, 'spark');
+        continue;
       }
       if (res) { p.dead = true; this.explode(p, res); this.lastBoom = { x: res.x, y: res.y }; }
     }
-    this.projectiles = this.projectiles.filter((p) => !p.dead);
+    this.projectiles = this.projectiles.filter((p) => !p.dead).concat(spawned);
     if (this.projectiles.length === 0) {
       this.phaseT += dt;
       if (this.volleys > 0 && this.active.alive && this.phaseT > 0.5) {
@@ -1015,6 +1208,14 @@ TK.Game = class Game {
         this.phaseT = 0.7;
       }
     }
+  }
+
+  bolt(x1, y1, x2, y2) {
+    const jit = [];
+    for (let i = 0; i < 20; i++) jit.push(Math.random() * 2 - 1);
+    jit[0] = jit[9] = jit[10] = jit[19] = 0;
+    this.bolts.push({ x1, y1, x2, y2, jit, t: 0, life: 0.4 });
+    this.emit(['z', Math.round(x1), Math.round(y1), Math.round(x2), Math.round(y2)]);
   }
 
   // ---------- bot ----------
@@ -1070,20 +1271,18 @@ TK.Game = class Game {
     c.facing = facing;
     const p = this.makeShot(c, angle, power);
     c.facing = saveF;
-    for (let i = 0; i < 2400; i++) {
-      const r = TK.stepShot(p, this.wind, this.terrain, this.chars, TK.DT);
-      if (r) return r;
-    }
-    return { out: true, x: p.x, y: p.y };
+    return TK.simulateShot(p, this.wind, this.terrain, this.chars);
   }
 
   scoreShot(c, target, r) {
     if (r.out) return 1e6;
     let s = r.hit === target ? 0 : TK.dist(r.x, r.y, target.x, target.y - TK.BODY_OFFSET);
+    const w = TK.weaponOf(c);
+    if (w.heal) return s; // medic blasts heal allies, no need to avoid them
     for (const o of this.chars) {
       if (!o.alive || o.team !== c.team) continue;
       const d = TK.dist(r.x, r.y, o.x, o.y - TK.BODY_OFFSET);
-      if (d < TK.BLAST_R + 40) s += o === c ? 3000 : 1500;
+      if (d < w.radius + 40) s += o === c ? 3000 : 1500;
     }
     return s;
   }
@@ -1096,8 +1295,8 @@ TK.Game = class Game {
     let best = { score: Infinity, facing: c.facing, angle: 45, power: 50 };
     for (const tgt of targets) {
       const facing = tgt.x >= c.x ? 1 : -1;
-      for (let a = 14; a <= 88; a += 3) {
-        for (let pw = 12; pw <= 100; pw += 2) {
+      for (let a = 14; a <= 86; a += 4) {
+        for (let pw = 12; pw <= 100; pw += 2.5) {
           const s = this.scoreShot(c, tgt, this.simulate(c, facing, a, pw)) + (tgt === targets[0] ? 0 : 20);
           if (s < best.score) best = { score: s, facing, angle: a, power: pw, target: tgt };
         }
@@ -1106,8 +1305,8 @@ TK.Game = class Game {
     // refine around the best coarse shot
     if (best.target) {
       const b0 = { ...best };
-      for (let a = b0.angle - 2; a <= b0.angle + 2; a++) {
-        for (let pw = b0.power - 2.4; pw <= b0.power + 2.4; pw += 0.2) {
+      for (let a = b0.angle - 3; a <= b0.angle + 3; a++) {
+        for (let pw = b0.power - 3; pw <= b0.power + 3; pw += 0.25) {
           if (pw > 100 || pw < 1) continue;
           const s = this.scoreShot(c, b0.target, this.simulate(c, b0.facing, a, pw));
           if (s < best.score) best = { ...best, score: s, angle: a, power: pw };
@@ -1126,6 +1325,7 @@ TK.Game = class Game {
     let energy = this.energy;
     const want = (id, cost) => { if (energy >= cost) { list.push(id); energy -= cost; } };
     if (c.hp < c.maxHp * 0.4 && Math.random() < 0.8) want('heal', 50);
+    if (TK.weaponOf(c).split && list.length === 0 && Math.random() < 0.5) want('power', 35);
     if (c.rage >= 100) list.push('super');
     const goodShot = plan.score < 60;
     if (goodShot && Math.random() < 0.55) want('triple', 45);
@@ -1213,10 +1413,13 @@ TK.Game = class Game {
       ctx.scale(c.facing, 1);
       const isActive = c === this.active && (this.phase === 'aim');
       TK.Art.drawChibi(ctx, {
-        color: c.color, hair: c.hair, hat: c.hat, angle: c.angle, mood: c.mood,
-        time, seed: c.id * 1.7, recoil: c.recoil,
+        color: c.color, hair: c.hair, hat: c.hat, hero: c.hero, weapon: c.weapon,
+        angle: c.angle, mood: c.frozen ? 'hurt' : c.mood,
+        time: c.frozen ? 0 : time, seed: c.id * 1.7, recoil: c.recoil,
         charging: isActive && this.charging ? this.power / 100 : 0,
       });
+      ctx.scale(c.facing, 1);
+      TK.Art.drawStatus(ctx, c, time);
       ctx.restore();
 
       // aim guide for the human whose turn it is
@@ -1266,6 +1469,7 @@ TK.Game = class Game {
       }
     }
     ctx.globalAlpha = 1;
+    for (const b of this.bolts) TK.Art.drawBolt(ctx, b);
     for (const r of this.rings) {
       const k = r.t / r.life;
       ctx.globalAlpha = 1 - k;
@@ -1432,8 +1636,14 @@ TK.Game = class Game {
       ctx.fillStyle = col;
       TK.roundRect(ctx, bx, y, Math.max(0, bw * v), 9, 4); ctx.fill();
     };
-    bar('MOVE', py + 26, this.phase === 'aim' ? this.stamina / 100 : 0, '#5fb8f0');
-    bar('ENERGY', py + 56, this.phase === 'aim' ? this.energy / 100 : 0, '#7bd64a');
+    const hh = TK.heroOf(showC);
+    bar('MOVE', py + 26, this.phase === 'aim' ? this.stamina / (100 * hh.agi) : 0, '#5fb8f0');
+    bar('ENERGY', py + 56, this.phase === 'aim' ? this.energy / (hh.energy || 100) : 0, '#7bd64a');
+    if (this.phase === 'aim') {
+      ctx.textAlign = 'right'; ctx.font = font(10, 700); ctx.fillStyle = '#ffe8b0';
+      ctx.fillText(String(Math.round(this.energy)), bx + bw, py + 49);
+      ctx.textAlign = 'left';
+    }
     const rage = showC ? showC.rage / 100 : 0;
     bar('RAGE', py + 86, rage, rage >= 1 ? (Math.sin(this.time * 10) > 0 ? '#ff4a4a' : '#ffb627') : '#ff7a45');
 
@@ -1442,6 +1652,13 @@ TK.Game = class Game {
     ctx.textAlign = 'left';
     ctx.font = font(10, 700); ctx.fillStyle = '#ffe8b0';
     ctx.fillText('POWER', pbx, py + 16);
+    if (showC) {
+      const w = TK.weaponOf(showC), h = TK.heroOf(showC);
+      ctx.textAlign = 'right';
+      ctx.font = font(12, 700);
+      TK.outlineText(ctx, `${h.title} · ${w.name}`, pbx + pbw, py + 16, '#ffe45c', '#2a1208', 3);
+      ctx.textAlign = 'left';
+    }
     ctx.fillStyle = '#1b2a3a';
     TK.roundRect(ctx, pbx, pby, pbw, pbh, 8); ctx.fill();
     const pw = this.charging ? this.power : this.phase === 'flying' || this.phase === 'settle' ? this.shotPower : 0;
@@ -1472,15 +1689,16 @@ TK.Game = class Game {
     else if (myTurn) {
       ctx.font = font(12, 600);
       ctx.fillStyle = 'rgba(255,232,176,0.7)';
-      ctx.fillText(this.touch ? 'Hold FIRE to charge, release to shoot' : 'Hold SPACE to charge, release to shoot', pbx + pbw / 2, pby + pbh / 2 + 1);
+      ctx.fillText(this.touch ? 'Hold FIRE to charge, release to shoot' : 'Hold SPACE to shoot · ←→ move · ↑↓ angle · 1-6 items · P pass', pbx + pbw / 2, pby + pbh / 2 + 1);
     }
     ctx.textAlign = 'left';
     ctx.font = font(10, 600);
     ctx.fillStyle = 'rgba(255,232,176,0.6)';
-    if (!this.touch) ctx.fillText('←→ move   ↑↓ angle   1-6 items   P pass   M mute   Esc pause   drag = look around', pbx + 60, py + 16);
+
 
     // item slots
     const sw = 50, gap = 8;
+    let tip = null;
     const ix0 = W - 16 - TK.ITEMS.length * (sw + gap);
     TK.ITEMS.forEach((it, i) => {
       const x = ix0 + i * (sw + gap), y = py + 20;
@@ -1503,7 +1721,21 @@ TK.Game = class Game {
       ctx.fillStyle = '#ffe8b0';
       ctx.fillText(it.rage ? 'RAGE' : it.cost + ' EN', x + sw / 2, y + sw + 10);
       this.addButton(x, y, sw, sw, () => { if (this.humanTurn()) this.useItem(it.id); });
+      const m = this.mouse;
+      if (m && m.x / this.ui >= x && m.x / this.ui <= x + sw && m.y / this.ui >= y && m.y / this.ui <= y + sw) tip = { it, x: x + sw / 2, y };
     });
+    if (tip) {
+      const w = showC ? TK.weaponOf(showC) : TK.WEAPONS.bomb;
+      const title = tip.it.rage ? w.superName : tip.it.name;
+      const desc = tip.it.rage ? w.superDesc + ' Needs full rage.' : tip.it.desc;
+      ctx.font = font(12, 600);
+      const tw = Math.max(ctx.measureText(desc).width, 120) + 20;
+      const tx = TK.clamp(tip.x - tw / 2, 8, W - tw - 8), ty = tip.y - 58;
+      this.panel(ctx, tx, ty, tw, 48, 10);
+      ctx.textAlign = 'left';
+      ctx.font = font(14, 700); ctx.fillStyle = '#ffe45c'; ctx.fillText(title, tx + 10, ty + 15);
+      ctx.font = font(12, 600); ctx.fillStyle = '#ffe8b0'; ctx.fillText(desc, tx + 10, ty + 34);
+    }
     // item tooltip on the active slots row
     ctx.textAlign = 'left';
 

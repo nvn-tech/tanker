@@ -44,6 +44,38 @@ Up to 6 per room (3 vs 3). Press **Enter** in game to chat.
 
 On touch devices, on-screen buttons appear during your turn.
 
+## Heroes
+
+Pick any hero with any weapon. Stats work like the classic games: **Attack** (damage dealt),
+**Defense** (damage taken), **Agility** (how far you walk and how soon your next turn comes), **Luck**
+(chance of a *Lucky!* hit for +50%).
+
+| Hero | Class | HP | Perk |
+| --- | --- | --- | --- |
+| Bo | Rookie | 1400 | Fills the rage bar 35% faster |
+| Gwen | Knight | 1550 | Heavy armor: takes 18% less damage (slow) |
+| Kaze | Ninja | 1200 | Walks 35% farther and acts sooner |
+| Luna | Witch | 1300 | 22% chance of a Lucky hit |
+| Grog | Brute | 1750 | Hits 12% harder, very slow |
+| Pixie | Tinker | 1350 | 130 energy per turn (more items) |
+
+## Weapons
+
+Each weapon has its own shot and its own **Super** (item 6, needs a full rage bar).
+
+| Weapon | Shot | Super |
+| --- | --- | --- |
+| Boom Bomb | Balanced damage and crater | Mega Bomb: giant blast, 2x damage |
+| Splitter | Bursts into 3 bomblets at the top of its arc | Fireworks: 6 bomblets |
+| Frost Cannon | Weak, but targets skip their next turn (then immune until they act) | Blizzard: huge freezing blast |
+| Toxic Flask | Poisons targets for 3 turns | Plague Cloud: bigger, double poison |
+| Thunder Rod | Lightning strike, heavy hit, tiny crater, half wind | Chain Storm: jumps to 2 more enemies |
+| Drill Rocket | Bores through ground before exploding | Earth Breaker: twice as deep, 1.8x damage |
+| Bouncy Ball | Bounces once, then explodes | Pinball: 3 bounces, explodes on each |
+| Medic Mortar | Hurts enemies, heals allies in the blast | Field Hospital: heals all allies 25% |
+
+Heroes and weapons are defined as data in `js/content.js`, so tuning numbers or adding new ones is easy.
+
 ## Mechanics
 
 - **Angle + power + wind.** Every shot is a ballistic arc; wind pushes it sideways. The white ▼ on the power bar marks your last shot's power.
@@ -55,7 +87,7 @@ On touch devices, on-screen buttons appear during your turn.
   3. Power Up — +50% damage
   4. Heal — restore 30% HP
   5. Teleport — you fly to where the shot lands
-  6. Super Shot — needs a full RAGE bar (filled by dealing/taking damage): bigger blast, 2× damage
+  6. Super — needs a full RAGE bar (filled by dealing/taking damage): your weapon's special attack
 - **Direct hits** do +20% (critical).
 - **Modes:** 1v1 vs bot, 2v2 with a bot ally, 2 players on the same PC, or online rooms (up to 3v3, bots can fill seats). Bots come in Easy / Normal / Hard.
 
@@ -65,9 +97,10 @@ On touch devices, on-screen buttons appear during your turn.
 index.html        page + menus
 css/style.css     menu styling
 js/util.js        helpers, physics constants
+js/content.js     heroes + weapons (stats, perks, supers)
 js/audio.js       synthesized sound effects (WebAudio)
 js/terrain.js     island generation, destructible mask, themes
-js/art.js         sky, chibi characters, hats, bombs
+js/art.js         sky, chibi characters, hero gear, weapons, projectiles
 js/game.js        game loop, physics, turns, items, bot AI, HUD
 js/net.js         WebSocket client + server address setting
 js/main.js        menu, lobby and chat wiring

@@ -225,3 +225,34 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   position: fixed; left: 12px; bottom: 120px; z-index: 6;
   width: min(360px, 80vw); font-size: 15px; padding: 6px 10px;
 }
+
+/* ---------- hero / weapon pickers ---------- */
+.card { width: min(940px, 100%); }
+.tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+.tab {
+  font: inherit; font-size: 16px; font-weight: 700; letter-spacing: 1px;
+  padding: 7px 16px; border-radius: 12px 12px 4px 4px; cursor: pointer;
+  border: 2px solid var(--gold); background: #1b120b; color: var(--cream);
+}
+.tab.on { background: var(--gold); color: #2a1a10; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; max-height: 430px; overflow-y: auto; padding: 2px; }
+.pick {
+  display: grid; grid-template-columns: 64px 1fr; gap: 4px 10px; align-items: start; text-align: left;
+  font: inherit; color: var(--cream); cursor: pointer;
+  padding: 8px 10px; border-radius: 14px; border: 2px solid rgba(201, 162, 106, 0.5); background: #1b120b;
+  min-width: 0;
+}
+.pick:hover { border-color: var(--gold); background: #2a1c12; }
+.pick.on { border-color: var(--sun); box-shadow: 0 0 0 2px var(--sun) inset; background: #33230f; }
+.pick canvas { width: 64px; height: 64px; border-radius: 12px; background: radial-gradient(circle at 50% 40%, #bfe9ff, #5fb8f0); grid-row: span 2; }
+.pick .t { font-weight: 700; font-size: 16px; line-height: 1.1; }
+.pick .t small { display: block; font-weight: 600; font-size: 12px; opacity: 0.7; letter-spacing: 1px; text-transform: uppercase; }
+.pick .d { font-size: 12px; line-height: 1.3; opacity: 0.85; grid-column: 1 / -1; }
+.pick .d b { color: var(--sun); }
+.stats { display: grid; grid-template-columns: auto 1fr; gap: 1px 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; align-items: center; }
+.pips { display: flex; gap: 2px; }
+.pips i { width: 10px; height: 6px; border-radius: 2px; background: rgba(255, 255, 255, 0.15); }
+.pips i.on { background: var(--sun); }
+.loadout { text-align: center; font-size: 14px; line-height: 1.35; margin-bottom: 4px; }
+.loadout b { color: var(--sun); }
+.team li .sub { font-size: 11px; opacity: 0.7; white-space: nowrap; }
